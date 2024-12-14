@@ -11,10 +11,21 @@ port = 5000
 PYTHON = "/usr/bin/python3"
 BASH = "/bin/bash"
 
+# Cron format:
+# * * * * *
+# | | | | |
+# | | | | day of the week (0–6) (Sunday to Saturday;
+# | | | month (1–12)             7 is also Sunday on some systems)
+# | | day of the month (1–31)
+# | hour (0–23)
+# minute (0–59)
+
+# Job format:
+# [jobs.<job_name>]
 [jobs.job_1]
 type = "PYTHON"
 schedule_type = "cron"
-schedule = "0 * * * *"
+schedule = "10 * * * *"
 command = "print('Hello, World!')"
 env_file = "/av/data/repos/avscheduler/env_file.env"
 condition = "job_2.last_run_successful and job_2.finished_within(2h)"

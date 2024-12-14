@@ -26,39 +26,28 @@
     </head>
     <body>
         <div class="container">
-            <h1>Job Scheduler Status</h1>
+            <h1>Execution Logs for Job {{ job_id }}</h1>
+
             <table class="table">
                 <thead>
                     <tr>
-                        <th>Job ID</th>
-                        <th>Last Execution</th>
-                        <th>Last Exit Code</th>
-                        <th>Last Execution Time (s)</th>
-                        <th>Next Execution</th>
-                        <th>Condition</th>
-                        <th>Actions</th>
+                        <th>Timestamp</th>
+                        <th>Exit Code</th>
+                        <th>Execution Time (s)</th>
                     </tr>
                 </thead>
                 <tbody>
-                    {% for job in jobs %}
+                    {% for log in logs %}
                     <tr>
-                        <td>{{ job.id }}</td>
-                        <td>{{ job.last_execution }}</td>
-                        <td>{{ job.last_exit_code }}</td>
-                        <td>{{ job.last_execution_time }}</td>
-                        <td>{{ job.next_execution }}</td>
-                        <td>{{ job.condition }}</td>
-                        <td>
-                            <a
-                                href="/job/{{ job.id }}"
-                                class="btn btn-primary btn-sm"
-                                >Details</a
-                            >
-                        </td>
+                        <td>{{ log[0] }}</td>
+                        <td>{{ log[1] }}</td>
+                        <td>{{ log[2] }}</td>
                     </tr>
                     {% endfor %}
                 </tbody>
             </table>
+
+            <a href="/" class="btn btn-secondary">Back</a>
         </div>
     </body>
 </html>

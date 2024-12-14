@@ -109,7 +109,7 @@ def restart():
 @click.command()
 def list_jobs():
     """
-    List all configured jobs from the configuration file.
+    List all configured jobs along with their execution status and schedule.
     """
     config = load_config(CONFIG_FILE)
     jobs = config.get("jobs", {})
@@ -117,11 +117,64 @@ def list_jobs():
         click.echo("No jobs found in the configuration.")
         return
 
+    # Connect to the database to fetch job logs
+    conn = sqlite3.connect(config["settings"]["db_path"])
+    cursor = conn.cursor()
+
+    # Fetch job execution history for each job
+    results = {}
+    for job_id in jobs.keys():
+        cursor.execute(
+            """
+            SELECT timestamp, exit_code, execution_time
+            FROM job_execution_logs
+            WHERE job_id = ?
+            ORDER BY timestamp DESC
+            LIMIT 1
+            """,
+            (job_id,),
+        )
+        row = cursor.fetchone()
+        if row:
+            last_execution, last_exit_code, last_execution_time = row
+        else:
+            last_execution, last_exit_code, last_execution_time = "N/A", "N/A", "N/A"
+
+        # Get the next scheduled run from APScheduler
+        from scheduler import scheduler
+        apscheduler_job = scheduler.get_job(job_id)
+        next_run_time = apscheduler_job.next_run_time if apscheduler_job else "N/A"
+
+        results[job_id] = {
+            "last_execution": last_execution,
+            "last_exit_code": last_exit_code,
+            "last_execution_time": last_execution_time,
+            "next_run_time": next_run_time,
+            "condition": jobs[job_id].get("condition", "N/A"),
+        }
+
+    conn.close()
+
+    # Display results in a table
     table = [
-        [job_id, job.get("type"), job.get("schedule"), job.get("command"), job.get("condition", "N/A")]
-        for job_id, job in jobs.items()
+        [
+            job_id,
+            data["last_execution"],
+            data["last_exit_code"],
+            data["last_execution_time"],
+            data["next_run_time"],
+            data["condition"],
+        ]
+        for job_id, data in results.items()
     ]
-    headers = ["Job ID", "Type", "Schedule", "Command", "Condition"]
+    headers = [
+        "Job ID",
+        "Last Execution",
+        "Last Exit Code",
+        "Last Execution Time (s)",
+        "Next Run Time",
+        "Condition",
+    ]
     click.echo(tabulate(table, headers=headers, tablefmt="grid"))
 
 
@@ -278,6 +331,40 @@ def view_logs(job_id):
     headers = ["ID", "Job ID", "Exit Code", "Execution Time (s)", "Timestamp"]
     click.echo(tabulate(logs, headers=headers, tablefmt="grid"))
 
+@click.command()
+@click.argument("job_id")
+@click.option("--before", help="Delete logs before a specific timestamp (format: YYYY-MM-DD HH:MM:SS).")
+@click.option("--all", is_flag=True, help="Delete all logs for the specified job.")
+def cleanup_logs(job_id, before, all):
+    """
+    Clean up execution logs for a specific job.
+    """
+    config = load_config(CONFIG_FILE)
+    db_path = config["settings"]["db_path"]
+
+    if not all and not before:
+        click.echo("You must specify either --before or --all.")
+        return
+
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+
+    try:
+        if all:
+            cursor.execute("DELETE FROM job_execution_logs WHERE job_id = ?", (job_id,))
+            click.echo(f"Deleted all logs for job '{job_id}'.")
+        elif before:
+            cursor.execute(
+                "DELETE FROM job_execution_logs WHERE job_id = ? AND timestamp < ?",
+                (job_id, before),
+            )
+            click.echo(f"Deleted logs for job '{job_id}' before {before}.")
+        conn.commit()
+    except Exception as e:
+        click.echo(f"Error cleaning logs: {e}")
+    finally:
+        conn.close()
+
 
 @click.command()
 def reload_config():
@@ -295,6 +382,7 @@ cli.add_command(stop)
 cli.add_command(restart)
 cli.add_command(status)
 cli.add_command(list_jobs)
+cli.add_command(cleanup_logs)
 cli.add_command(run_job)
 cli.add_command(add_job)
 cli.add_command(edit_job)
