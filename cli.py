@@ -4,7 +4,7 @@ import toml
 import sqlite3
 from tabulate import tabulate
 from scheduler import start_daemon, CONFIG, load_config, scheduler
-from models import init_db
+import signal
 
 CONFIG_FILE = "config.toml"
 
@@ -24,6 +24,17 @@ def start(daemonize):
     """
     Start the daemon.
     """
+    config = load_config(CONFIG_FILE)
+    pid_file = config["settings"].get("pid_file", "/tmp/avscheduler.pid")
+
+    # Check if the daemon is already running
+    if os.path.exists(pid_file):
+        with open(pid_file, "r") as f:
+            pid = int(f.read().strip())
+        if os.path.exists(f"/proc/{pid}"):
+            click.echo(f"Daemon is already running with PID {pid}.")
+            return
+
     click.echo("Starting the scheduler daemon...")
     from scheduler import start_daemon
     start_daemon(daemonize=daemonize)
@@ -33,14 +44,55 @@ def start(daemonize):
         click.echo("Scheduler running in the foreground...")
 
 
+
 @click.command()
 def stop():
     """
     Stop the scheduler daemon.
     """
-    click.echo("Stopping the scheduler daemon...")
-    scheduler.shutdown(wait=False)
-    click.echo("Scheduler daemon stopped.")
+    config = load_config(CONFIG_FILE)
+    pid_file = config["settings"].get("pid_file", "/tmp/avscheduler.pid")
+
+    if not os.path.exists(pid_file):
+        click.echo(f"Error: PID file {pid_file} not found. Is the daemon running?")
+        return
+
+    # Read the PID from the file
+    with open(pid_file, "r") as f:
+        pid = int(f.read().strip())
+
+    try:
+        # Send SIGTERM to the daemon
+        os.kill(pid, signal.SIGTERM)
+        click.echo(f"Daemon with PID {pid} stopped.")
+    except ProcessLookupError:
+        click.echo(f"Error: No process found with PID {pid}. Removing stale PID file.")
+        os.remove(pid_file)
+    except PermissionError:
+        click.echo(f"Error: Permission denied to stop the process with PID {pid}.")
+
+
+@click.command()
+def status():
+    """
+    Check the status of the scheduler daemon.
+    """
+    config = load_config(CONFIG_FILE)
+    pid_file = config["settings"].get("pid_file", "/tmp/avscheduler.pid")
+
+    if not os.path.exists(pid_file):
+        click.echo("Scheduler daemon is not running (no PID file found).")
+        return
+
+    # Read the PID and check if the process is alive
+    with open(pid_file, "r") as f:
+        pid = int(f.read().strip())
+
+    if os.path.exists(f"/proc/{pid}"):
+        click.echo(f"Scheduler daemon is running with PID {pid}.")
+    else:
+        click.echo(f"Scheduler daemon is not running (stale PID file found).")
+        os.remove(pid_file)
 
 
 @click.command()
@@ -241,6 +293,7 @@ def reload_config():
 cli.add_command(start)
 cli.add_command(stop)
 cli.add_command(restart)
+cli.add_command(status)
 cli.add_command(list_jobs)
 cli.add_command(run_job)
 cli.add_command(add_job)
@@ -248,6 +301,7 @@ cli.add_command(edit_job)
 cli.add_command(delete_job)
 cli.add_command(view_logs)
 cli.add_command(reload_config)
+
 
 if __name__ == "__main__":
     cli()

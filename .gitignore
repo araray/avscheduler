@@ -13,6 +13,7 @@ outputs/
 tests/artifacts
 experiments/
 logs/
+*.db
 
 # Distribution / packaging
 .Python

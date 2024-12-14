@@ -1,6 +1,7 @@
 [settings]
 db_path = "/av/data/repos/avscheduler/jobs.db"
 sampling_interval = 1000
+pid_file = "/av/data/repos/avscheduler/logs/daemon.pid"
 
 [web_server]
 host = "127.0.0.1"

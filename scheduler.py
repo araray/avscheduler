@@ -2,6 +2,7 @@ import os
 import toml
 import logging
 import sqlite3
+import signal
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
@@ -9,8 +10,8 @@ from datetime import datetime
 from subprocess import Popen, PIPE
 from models import init_db
 from condition_parser import evaluate_condition
-import web_ui  # Import Flask app for web interface
-from daemon import DaemonContext  # New addition for daemonization
+import web_ui
+from daemon import DaemonContext
 
 # Initialize logging
 LOG_FILE = "logs/scheduler.log"
@@ -45,6 +46,24 @@ def load_config(config_file="config.toml"):
         return CONFIG
     else:
         raise FileNotFoundError(f"Configuration file '{config_file}' not found.")
+
+
+def write_pid(pid_file):
+    """
+    Write the current process PID to a PID file.
+    """
+    with open(pid_file, "w") as f:
+        f.write(str(os.getpid()))
+    logging.info(f"Daemon PID {os.getpid()} written to {pid_file}.")
+
+
+def remove_pid(pid_file):
+    """
+    Remove the PID file.
+    """
+    if os.path.exists(pid_file):
+        os.remove(pid_file)
+        logging.info(f"PID file {pid_file} removed.")
 
 
 # Job Execution
@@ -146,6 +165,9 @@ def start_daemon(daemonize=False):
     init_db(CONFIG["settings"]["db_path"])
     schedule_jobs(CONFIG["jobs"])
 
+    # Get the PID file path from config
+    pid_file = CONFIG["settings"].get("pid_file", "/tmp/avscheduler.pid")
+
     # Start the Flask web interface
     web_host = CONFIG["web_server"].get("host", "127.0.0.1")
     web_port = CONFIG["web_server"].get("port", 5000)
@@ -154,17 +176,23 @@ def start_daemon(daemonize=False):
         web_ui.app.run(host=web_host, port=web_port, debug=False)
 
     if daemonize:
-        # Daemonize using python-daemon
+        # Daemonize using python-daemon or custom method
         with DaemonContext():
-            logging.info("Daemonizing scheduler...")
+            write_pid(pid_file)
             flask_thread = start_flask_in_thread()
+            try:
+                scheduler.start()
+                flask_thread.join()
+            finally:
+                remove_pid(pid_file)
+    else:
+        write_pid(pid_file)
+        flask_thread = start_flask_in_thread()
+        try:
             scheduler.start()
             flask_thread.join()
-    else:
-        # Run directly in foreground
-        flask_thread = start_flask_in_thread()
-        scheduler.start()
-        flask_thread.join()
+        finally:
+            remove_pid(pid_file)
 
 def start_flask_in_thread():
     """
