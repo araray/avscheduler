@@ -1,0 +1,19 @@
+[Unit]
+Description=AV Scheduler Daemon
+After=network.target
+
+[Service]
+Type=simple
+User=araray
+Group=araray
+WorkingDirectory=/av/data/repos/avscheduler
+ExecStart=/usr/bin/python3 /av/data/repos/avscheduler/cli.py start --daemonize
+ExecStop=/usr/bin/python3 /av/data/repos/avscheduler/cli.py stop
+Restart=on-failure
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+StandardOutput=append:/av/data/repos/avscheduler/logs/avscheduler.log
+StandardError=append:/av/data/repos/avscheduler/logs/avscheduler.log
+
+[Install]
+WantedBy=multi-user.target

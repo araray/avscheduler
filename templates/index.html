@@ -1,0 +1,32 @@
+<!doctype html>
+<html>
+    <head>
+        <title>Job Scheduler</title>
+        <link rel="stylesheet" href="/static/bootstrap.min.css" />
+    </head>
+    <body>
+        <div class="container">
+            <h1>Job Scheduler Status</h1>
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>Job ID</th>
+                        <th>Exit Code</th>
+                        <th>Execution Time (s)</th>
+                        <th>Timestamp</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for log in logs %}
+                    <tr>
+                        <td>{{ log[1] }}</td>
+                        <td>{{ log[2] }}</td>
+                        <td>{{ log[3] }}</td>
+                        <td>{{ log[4] }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </body>
+</html>

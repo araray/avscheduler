@@ -1,0 +1,25 @@
+[settings]
+db_path = "/av/data/repos/avscheduler/jobs.db"
+sampling_interval = 1000
+
+[web_server]
+host = "127.0.0.1"
+port = 5000
+
+[interpreters]
+PYTHON = "/usr/bin/python3"
+BASH = "/bin/bash"
+
+[jobs.job_1]
+type = "PYTHON"
+schedule_type = "cron"
+schedule = "0 * * * *"
+command = "print('Hello, World!')"
+env_file = "/av/data/repos/avscheduler/env_file.env"
+condition = "job_2.last_run_successful and job_2.finished_within(2h)"
+
+[jobs.job_2]
+type = "BASH"
+schedule_type = "interval"
+interval_seconds = 30
+command = "echo 'Running Job 2'"
