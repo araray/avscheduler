@@ -1,7 +1,7 @@
 [settings]
-db_path = "/av/data/repos/avscheduler/jobs.db"
+db_path = "PATH_TO_AVSCHEDULER_DIR/jobs.db"
 sampling_interval = 1000
-pid_file = "/av/data/repos/avscheduler/logs/daemon.pid"
+pid_file = "PATH_TO_AVSCHEDULER_DIR/logs/daemon.pid"
 
 [web_server]
 host = "127.0.0.1"
@@ -27,7 +27,7 @@ type = "PYTHON"
 schedule_type = "cron"
 schedule = "10 * * * *"
 command = "print('Hello, World!')"
-env_file = "/av/data/repos/avscheduler/env_file.env"
+env_file = "PATH_TO_AVSCHEDULER_DIR/env_file.env"
 condition = "job_2.last_run_successful and job_2.finished_within(2h)"
 
 [jobs.job_2]
@@ -35,10 +35,3 @@ type = "BASH"
 schedule_type = "interval"
 interval_seconds = 3600
 command = "echo 'Running Job 2'"
-
-[jobs.loterias]
-type = "BASH"
-schedule_type = "cron"
-schedule = "55 20 * * *"
-env_file = "/av/data/loterias/env"
-command = "/av/data/repos/avscheduler/utils/job_wrapper.sh /av/data/loterias/auto-update.job.sh"
