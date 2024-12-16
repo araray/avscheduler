@@ -248,7 +248,7 @@ Job details page:
 Integrate the scheduler with **systemd** for automatic startup and process management.
 
 ### **Service File**
-Create a systemd service file (`/etc/systemd/system/job_scheduler.service`):
+Create a systemd service file (`/etc/systemd/system/avscheduler.service`):
 
 ```ini
 [Unit]
@@ -276,15 +276,15 @@ WantedBy=multi-user.target
   ```
 - Enable the service:
   ```bash
-  sudo systemctl enable job_scheduler.service
+  sudo systemctl enable avscheduler.service
   ```
 - Start the service:
   ```bash
-  sudo systemctl start job_scheduler.service
+  sudo systemctl start avscheduler.service
   ```
 - Check status:
   ```bash
-  sudo systemctl status job_scheduler.service
+  sudo systemctl status avscheduler.service
   ```
 
 ---
