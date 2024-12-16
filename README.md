@@ -221,8 +221,25 @@ http://127.0.0.1:8080
 - View details of a specific job.
 
 ### **Job Details**
+
 - View the full execution history of a job.
 - Delete logs for a specific job.
+
+
+
+### **Screenshots**
+
+
+
+Main page:
+
+![AVScheduler Main Screen](https://i.imgur.com/T1M11Dm.png)
+
+
+
+Job details page:
+
+![AVScheduler Job Details Page](https://i.imgur.com/2VpmTAx.png)
 
 ---
 
