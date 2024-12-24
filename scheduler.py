@@ -2,7 +2,6 @@ import os
 import toml
 import logging
 import sqlite3
-import signal
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
@@ -13,8 +12,12 @@ from condition_parser import evaluate_condition
 import web_ui
 from daemon import DaemonContext
 
+from utils import get_valid_directory
+
 # Initialize logging
-LOG_FILE = "logs/scheduler.log"
+logs_path = get_valid_directory()
+LOG_FILE = os.path.join(str(logs_path), "logs", "scheduler.log")
+os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
 logging.basicConfig(
     level=logging.INFO,
     filename=LOG_FILE,

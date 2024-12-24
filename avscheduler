@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+
+
+function check_avscheduler_cli_py() {
+    if [[ -n $1 ]] && [[ -d "$1" ]] && [[ -f "$1/cli.py" ]]; then
+        return 0
+    fi
+    return 1
+}
+
+dir_avscheduler=""
+if check_avscheduler_cli_py $1; then
+    dir_avscheduler=$1
+    shift
+elif check_avscheduler_cli_py ${AVSCHEDULER_DIR}; then
+    dir_avscheduler=${AVSCHEDULER_DIR}
+elif check_avscheduler_cli_py ${PWD}; then
+    dir_avscheduler=${PWD}
+else
+    echo "Could not locate AVScheduler directory."
+    exit 1
+fi
+
+#echo "AVScheduler directory: ${dir_avscheduler}"
+
+#cd ${dir_avscheduler}
+python ${dir_avscheduler}/cli.py $@

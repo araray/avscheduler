@@ -1,8 +1,15 @@
-from flask import Flask, render_template, redirect
+import os
 import sqlite3
 import toml
 
+from flask import Flask, render_template, redirect
+
+from utils import get_valid_directory
+
 scheduler = None
+
+config_path = get_valid_directory()
+CONFIG_FILE = os.path.join(str(config_path), "config.toml")
 
 def get_scheduler_instance():
     global scheduler
@@ -12,7 +19,7 @@ def get_scheduler_instance():
 
 
 app = Flask(__name__)
-CONFIG = toml.load("config.toml")
+CONFIG = toml.load(CONFIG_FILE)
 DB_PATH = CONFIG["settings"]["db_path"]
 
 @app.route("/")

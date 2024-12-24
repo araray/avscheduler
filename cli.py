@@ -1,21 +1,32 @@
-import click
-import os
-import toml
-import sqlite3
-from tabulate import tabulate
-from scheduler import start_daemon, CONFIG, load_config, scheduler
-import signal
+"""
+    Job Scheduler CLI: Manage jobs, daemon, and configuration.
+"""
 
-CONFIG_FILE = "config.toml"
+import os
+import signal
+import sqlite3
+import toml
+
+import click
+
+from tabulate import tabulate
+
+from scheduler import start_daemon, CONFIG, load_config, scheduler, run_job
+from utils import get_valid_directory
+
+
+config_path = get_valid_directory()
+CONFIG_FILE = os.path.join(str(config_path), "config.toml")
 
 
 @click.group()
-def cli():
+@click.option("--config", "-c", default=CONFIG_FILE, help="Path to a configuration file")
+def cli(config):
     """
     Job Scheduler CLI: Manage jobs, daemon, and configuration.
     """
     global CONFIG
-    CONFIG = load_config(CONFIG_FILE)
+    CONFIG = load_config(config)
 
 
 @click.command()
@@ -190,7 +201,6 @@ def run_job(job_id):
         click.echo(f"Job '{job_id}' not found.")
         return
 
-    from scheduler import run_job
     interpreter = CONFIG["interpreters"].get(job["type"])
     if not interpreter:
         click.echo(f"Interpreter for job '{job_id}' not configured.")
