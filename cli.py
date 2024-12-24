@@ -91,7 +91,7 @@ def status():
     if os.path.exists(f"/proc/{pid}"):
         click.echo(f"Scheduler daemon is running with PID {pid}.")
     else:
-        click.echo(f"Scheduler daemon is not running (stale PID file found).")
+        click.echo("Scheduler daemon is not running (stale PID file found).")
         os.remove(pid_file)
 
 
@@ -141,7 +141,6 @@ def list_jobs():
             last_execution, last_exit_code, last_execution_time = "N/A", "N/A", "N/A"
 
         # Get the next scheduled run from APScheduler
-        from scheduler import scheduler
         apscheduler_job = scheduler.get_job(job_id)
         next_run_time = apscheduler_job.next_run_time if apscheduler_job else "N/A"
 

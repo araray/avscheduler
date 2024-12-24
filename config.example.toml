@@ -21,7 +21,7 @@ BASH = "/bin/bash"
 # minute (0–59)
 
 # Job format:
-# [jobs.<job_name>]
+# [jobs.<job_name>] / [jobs.<job_id>]
 [jobs.job_1]
 type = "PYTHON"
 schedule_type = "cron"
