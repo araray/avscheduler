@@ -36,6 +36,7 @@ def start(daemonize):
     Start the daemon.
     """
     config = load_config(CONFIG_FILE)
+    CONFIG = config
     pid_file = config["settings"].get("pid_file", "/tmp/avscheduler.pid")
 
     # Check if the daemon is already running
@@ -47,7 +48,6 @@ def start(daemonize):
             return
 
     click.echo("Starting the scheduler daemon...")
-    from scheduler import start_daemon
     start_daemon(daemonize=daemonize)
     if daemonize:
         click.echo("Scheduler daemon started in background.")

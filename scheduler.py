@@ -164,7 +164,7 @@ def start_daemon(daemonize=False):
     Start the job scheduler daemon.
     """
     global CONFIG
-    CONFIG = load_config()
+
     init_db(CONFIG["settings"]["db_path"])
     schedule_jobs(CONFIG["jobs"])
 
