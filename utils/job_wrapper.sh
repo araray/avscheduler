@@ -24,6 +24,8 @@ TIMESTAMP=$(date +"%Y-%m-%d %H:%M:%S")
     echo "[$TIMESTAMP] Starting job: $@"
     "$@" # Run the provided command or script
     rc=$? # Capture the return code
+    # Get final timestamp
+    TIMESTAMP=$(date +"%Y-%m-%d %H:%M:%S")
     echo "[$TIMESTAMP] Job completed."
     echo "---"
 } >> "$LOG_FILE" 2>&1
