@@ -14,7 +14,7 @@ CONFIG_FILE = os.path.join(str(config_path), "config.toml")
 def get_scheduler_instance():
     global scheduler
     if scheduler is None:
-        from scheduler import scheduler  # Late import
+        from scheduler import scheduler
     return scheduler
 
 
