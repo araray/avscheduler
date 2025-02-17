@@ -190,7 +190,7 @@ def list_jobs():
 
 @click.command()
 @click.argument("job_id")
-def run_job(job_id):
+def run_single_job(job_id):
     """
     Manually run a specific job by its ID.
     """
@@ -392,7 +392,7 @@ cli.add_command(restart)
 cli.add_command(status)
 cli.add_command(list_jobs)
 cli.add_command(cleanup_logs)
-cli.add_command(run_job)
+cli.add_command(run_single_job)
 cli.add_command(add_job)
 cli.add_command(edit_job)
 cli.add_command(delete_job)
