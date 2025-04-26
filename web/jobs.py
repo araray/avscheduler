@@ -2,13 +2,14 @@
 
 """
 Flask Blueprint for managing scheduler jobs (Add, Edit, Delete) via the web UI.
-Handles interaction with the configuration file and potentially the scheduler.
+Handles interaction with the configuration file and triggers daemon reload.
 """
 
 import os
 import toml
 import logging
 import uuid # Import for generating IDs
+import signal # Import signal for SIGHUP
 from flask import (
     Blueprint, render_template, redirect, url_for, flash, request, current_app, g
 )
@@ -19,7 +20,8 @@ from datetime import datetime # Import datetime for parsing
 from .forms import JobForm
 # Import core components needed
 from core.config_loader import load_config # To load/save config
-from core.scheduler_logic import add_or_update_job_in_scheduler, remove_job_from_scheduler # For Phase 4 integration
+# Import helpers for signaling daemon
+from core.scheduler_logic import read_pid, is_process_running
 
 # Create Blueprint
 bp = Blueprint('jobs', __name__, url_prefix='/jobs')
@@ -47,16 +49,34 @@ def _load_config_or_flash(config_path):
     return None
 
 def _save_config_or_flash(config_path, config_data):
-    """Saves TOML config or flashes an error and returns False on failure."""
+    """Saves TOML config, triggers daemon reload, updates app config, or flashes error."""
     try:
         # Ensure 'jobs' section exists before saving
         config_data.setdefault("jobs", {})
         with open(config_path, "w") as f:
             toml.dump(config_data, f)
         logger.info(f"Configuration saved successfully to: {config_path}")
-        # Trigger reload in running scheduler (Phase 4 - Placeholder)
-        _trigger_scheduler_reload()
-        return True
+
+        # --- Update Web UI's in-memory config ---
+        # This makes the change effective for subsequent requests in the same worker
+        current_app.config['SCHEDULER_CONFIG'] = config_data
+        logger.info("Web UI in-memory configuration updated.")
+        # --- End Web UI Update ---
+
+        # --- Trigger reload in running scheduler daemon ---
+        reload_status = _trigger_scheduler_reload(config_data)
+        # --- End Daemon Trigger ---
+
+        # Flash appropriate message based on reload status
+        if reload_status == "success":
+            flash("Configuration saved and reload signal sent to daemon.", "info")
+        elif reload_status == "not_running":
+            flash("Configuration saved, but daemon does not appear to be running. Please start/restart it manually.", "warning")
+        else: # "error" or other issues
+            flash("Configuration saved, but failed to send reload signal to daemon. Check logs and restart manually if needed.", "error")
+
+        return True # Indicate config file was saved
+
     except IOError as e:
         logger.error(f"Error writing configuration file '{config_path}': {e}", exc_info=True)
         flash(f"Error: Failed to write configuration file '{config_path}'.", "error")
@@ -65,17 +85,47 @@ def _save_config_or_flash(config_path, config_data):
         flash("An unexpected error occurred while saving the configuration.", "error")
     return False
 
-def _trigger_scheduler_reload():
+def _trigger_scheduler_reload(config_data) -> str:
     """
-    Placeholder function to signal the running scheduler to reload config.
-    Actual implementation depends on Phase 4 (e.g., sending SIGHUP, IPC).
+    Sends SIGHUP to the running scheduler daemon process.
+
+    Args:
+        config_data: The configuration dictionary (to find pid_file).
+
+    Returns:
+        A status string: "success", "not_running", or "error".
     """
-    # In a real implementation (Phase 4):
-    # - Get PID from config['settings']['pid_file']
-    # - Send signal.SIGHUP to the PID
-    # - Or use another IPC mechanism
-    logger.info("Placeholder: Triggering scheduler config reload (needs Phase 4 implementation).")
-    flash("Configuration saved. Please manually reload or restart the scheduler daemon for changes to take full effect.", "warning")
+    pid_file = config_data.get("settings", {}).get("pid_file")
+    if not pid_file:
+        logger.error("Cannot trigger daemon reload: 'pid_file' not found in configuration.")
+        return "error"
+
+    pid = read_pid(pid_file)
+    if not pid:
+        logger.warning(f"Cannot trigger daemon reload: PID file '{pid_file}' not found or empty.")
+        return "not_running" # Daemon likely not running
+
+    if not is_process_running(pid):
+        logger.warning(f"Cannot trigger daemon reload: Process with PID {pid} (from '{pid_file}') not found.")
+        # Clean up stale PID file? Maybe not here, let status/stop handle it.
+        return "not_running"
+
+    # Send the SIGHUP signal
+    logger.info(f"Sending SIGHUP signal to scheduler process PID {pid} to trigger configuration reload...")
+    try:
+        os.kill(pid, signal.SIGHUP)
+        logger.info(f"SIGHUP signal sent successfully to PID {pid}.")
+        return "success"
+    except ProcessLookupError:
+        logger.error(f"Error sending SIGHUP: Process with PID {pid} disappeared unexpectedly.", exc_info=True)
+        return "not_running" # Process died
+    except PermissionError:
+        logger.error(f"Error sending SIGHUP: Permission denied for PID {pid}. Try running web server/daemon as same user?", exc_info=True)
+        return "error"
+    except Exception as e:
+        logger.error(f"An unexpected error occurred while sending SIGHUP signal to PID {pid}: {e}", exc_info=True)
+        return "error"
+
 
 def _generate_unique_job_id(existing_ids: set) -> str:
     """Generates a unique 8-character hex job ID."""
@@ -91,14 +141,18 @@ def _generate_unique_job_id(existing_ids: set) -> str:
 @bp.route("/add", methods=["GET", "POST"])
 def add_job():
     """Route to display and handle adding a new job."""
-    config_path = current_app.config.get('SCHEDULER_CONFIG', {}).get('_config_file_path')
+    # Use the config stored in the app context for consistency within the request
+    config = g.get('config', {})
+    config_path = config.get('_config_file_path') # Get path from loaded config
+
     if not config_path:
         flash("Configuration file path not found in application settings.", "error")
         return redirect(url_for('routes.index'))
 
-    config = _load_config_or_flash(config_path)
-    if config is None:
-        return redirect(url_for('routes.index')) # Redirect if config loading failed
+    # Load fresh config from disk *only* for validation/choices if needed,
+    # but operate on the 'g.config' for modifications within the request lifecycle.
+    # Using g.config avoids potential race conditions if multiple requests happen.
+    # However, saving writes the modified g.config back to disk.
 
     form = JobForm()
     # Populate choices for job_type dynamically from config
@@ -106,6 +160,9 @@ def add_job():
     form.job_type.choices = interpreter_choices
 
     if form.validate_on_submit():
+        # Operate on a copy of the config from 'g' or load fresh?
+        # Let's modify the 'config' object directly (which is g.config)
+        # and then save it.
         jobs = config.setdefault("jobs", {})
         job_id = form.job_id.data # Get user input (might be empty)
         generated_id = False
@@ -119,21 +176,19 @@ def add_job():
 
         elif job_id in jobs: # Check for collision only if user provided ID
             flash(f"Job ID '{job_id}' already exists. Please choose a unique ID or leave blank to auto-generate.", "error")
-            # Don't redirect, let user fix the ID
             return render_template("add_edit_job.html", form=form, mode='add', job_id=None)
 
         # Create new job entry
         new_job_data = {
-            "type": form.job_type.data, # Use form field name
+            "type": form.job_type.data,
             "schedule_type": form.schedule_type.data,
             "command": form.command.data,
-            # Add optional fields if they have data
             **({ "name": form.name.data } if form.name.data else {}),
             **({ "condition": form.condition.data } if form.condition.data else {}),
             **({ "env_file": form.env_file.data } if form.env_file.data else {}),
             **({ "timeout_seconds": form.timeout_seconds.data } if form.timeout_seconds.data is not None else {}),
             **({ "misfire_grace_time": form.misfire_grace_time.data } if form.misfire_grace_time.data is not None else {}),
-            **({ "coalesce": form.coalesce.data }), # Boolean, always include
+            **({ "coalesce": form.coalesce.data }),
             **({ "max_instances": form.max_instances.data } if form.max_instances.data is not None else {}),
         }
 
@@ -143,24 +198,25 @@ def add_job():
         elif form.schedule_type.data == 'interval':
             new_job_data["interval_seconds"] = form.interval_seconds.data
         elif form.schedule_type.data == 'date':
-            # Format datetime object back to string for TOML
             new_job_data["run_date"] = form.run_date.data.strftime('%Y-%m-%d %H:%M:%S') if form.run_date.data else None
 
         jobs[job_id] = new_job_data
 
-        # Save updated config back to file
+        # Save the modified 'config' object back to file and trigger reload
         if _save_config_or_flash(config_path, config):
-            if generated_id:
-                flash(f"Job added successfully with generated ID '{job_id}'!", "success")
-            else:
-                flash(f"Job '{job_id}' added successfully!", "success")
+            # Flash message handled by _save_config_or_flash
+            # if generated_id:
+            #     flash(f"Job added successfully with generated ID '{job_id}'!", "success")
+            # else:
+            #     flash(f"Job '{job_id}' added successfully!", "success")
             return redirect(url_for('routes.index'))
         else:
-            # Saving failed, stay on page, error flashed by helper
-             return render_template("add_edit_job.html", form=form, mode='add', job_id=None)
+            # Saving failed, remove the added job from the in-memory config
+            # to prevent inconsistent state before re-rendering
+            jobs.pop(job_id, None)
+            return render_template("add_edit_job.html", form=form, mode='add', job_id=None)
 
     elif request.method == "POST":
-         # Form validation failed
          flash("Please correct the errors below.", "warning")
 
     # GET request or validation failed on POST
@@ -170,16 +226,19 @@ def add_job():
 @bp.route("/edit/<job_id>", methods=["GET", "POST"])
 def edit_job(job_id):
     """Route to display and handle editing an existing job."""
-    config_path = current_app.config.get('SCHEDULER_CONFIG', {}).get('_config_file_path')
+    config = g.get('config', {})
+    config_path = config.get('_config_file_path')
+
     if not config_path:
         flash("Configuration file path not found in application settings.", "error")
         return redirect(url_for('routes.index'))
 
-    config = _load_config_or_flash(config_path)
-    if config is None:
-        return redirect(url_for('routes.index'))
+    # Load a fresh copy for editing to avoid modifying 'g.config' before saving
+    config_to_edit = _load_config_or_flash(config_path)
+    if config_to_edit is None:
+         return redirect(url_for('routes.index')) # Redirect if config loading failed
 
-    jobs = config.get("jobs", {})
+    jobs = config_to_edit.get("jobs", {})
     job_data = jobs.get(job_id)
 
     if not job_data:
@@ -188,64 +247,53 @@ def edit_job(job_id):
         raise NotFound() # Return 404
 
     # --- Pre-population Logic ---
-    # Create the form instance first
     form = JobForm()
-
-    # Populate choices for job_type dynamically before setting data
-    interpreter_choices = [(key, key) for key in config.get("interpreters", {}).keys()]
+    interpreter_choices = [(key, key) for key in config_to_edit.get("interpreters", {}).keys()]
     form.job_type.choices = interpreter_choices
 
-    # On GET request, pre-populate form fields from job_data
     if request.method == 'GET':
-        form.job_id.data = job_id # Set the ID from the URL
+        form.job_id.data = job_id
         form.name.data = job_data.get('name')
-        form.job_type.data = job_data.get('type') # Map 'type' from config
+        form.job_type.data = job_data.get('type')
         form.command.data = job_data.get('command')
         form.schedule_type.data = job_data.get('schedule_type')
         form.schedule.data = job_data.get('schedule')
         form.interval_seconds.data = job_data.get('interval_seconds')
-        # Parse run_date string into datetime object for the form field
         run_date_str = job_data.get('run_date')
         if run_date_str and isinstance(run_date_str, str):
             try:
                 form.run_date.data = datetime.strptime(run_date_str, '%Y-%m-%d %H:%M:%S')
             except ValueError:
                 logger.warning(f"Could not parse run_date '{run_date_str}' for job '{job_id}'.")
-                form.run_date.data = None # Clear if invalid format
+                form.run_date.data = None
         else:
-             form.run_date.data = None # Set to None if not present or not string
-
+             form.run_date.data = None
         form.condition.data = job_data.get('condition')
         form.env_file.data = job_data.get('env_file')
         form.timeout_seconds.data = job_data.get('timeout_seconds')
         form.misfire_grace_time.data = job_data.get('misfire_grace_time')
-        # WTForms handles boolean default correctly, but explicit set is safer
         form.coalesce.data = job_data.get('coalesce', True)
         form.max_instances.data = job_data.get('max_instances', 1)
 
-    # Set job_id field as read-only for editing (applies to both GET and POST rendering)
     form.job_id.render_kw = {'readonly': True}
     # --- End Pre-population Logic ---
 
 
     if form.validate_on_submit():
-        # Update job data in the config dictionary
-        # Use job_id from URL parameter, not form data (as it's readonly)
+        # Update job data in the loaded config dictionary (config_to_edit)
         updated_job_data = {
             "type": form.job_type.data,
             "schedule_type": form.schedule_type.data,
             "command": form.command.data,
-            # Add optional fields if they have data
             **({ "name": form.name.data } if form.name.data else {}),
             **({ "condition": form.condition.data } if form.condition.data else {}),
             **({ "env_file": form.env_file.data } if form.env_file.data else {}),
             **({ "timeout_seconds": form.timeout_seconds.data } if form.timeout_seconds.data is not None else {}),
             **({ "misfire_grace_time": form.misfire_grace_time.data } if form.misfire_grace_time.data is not None else {}),
-            **({ "coalesce": form.coalesce.data }), # Boolean, always include
+            **({ "coalesce": form.coalesce.data }),
             **({ "max_instances": form.max_instances.data } if form.max_instances.data is not None else {}),
         }
 
-        # Add/update schedule-specific fields, remove old ones if type changed
         updated_job_data.pop("schedule", None)
         updated_job_data.pop("interval_seconds", None)
         updated_job_data.pop("run_date", None)
@@ -257,70 +305,67 @@ def edit_job(job_id):
         elif form.schedule_type.data == 'date':
             updated_job_data["run_date"] = form.run_date.data.strftime('%Y-%m-%d %H:%M:%S') if form.run_date.data else None
 
-        # Replace the old job data with the updated data using the job_id from URL
+        # Replace the old job data in the config_to_edit dictionary
         jobs[job_id] = updated_job_data
 
-        # Save updated config back to file
-        if _save_config_or_flash(config_path, config):
-            flash(f"Job '{job_id}' updated successfully!", "success")
+        # Save the modified config_to_edit back to file and trigger reload
+        if _save_config_or_flash(config_path, config_to_edit):
+             # Flash message handled by _save_config_or_flash
+            # flash(f"Job '{job_id}' updated successfully!", "success")
             return redirect(url_for('routes.job_details', job_id=job_id))
         else:
-             # Saving failed, stay on page, error flashed by helper
-             # Form already contains submitted data due to validate_on_submit
-             # Need to ensure choices are still populated and ID is readonly
+             # Saving failed, stay on page
              form.job_type.choices = interpreter_choices
              form.job_id.render_kw = {'readonly': True}
-             form.job_id.data = job_id # Ensure job_id data is set
+             form.job_id.data = job_id
              return render_template("add_edit_job.html", form=form, mode='edit', job_id=job_id)
 
     elif request.method == "POST":
-        # Form validation failed on POST
         flash("Please correct the errors below.", "warning")
-        # Form instance already contains submitted data and validation errors
-        # Need to re-populate dynamic choices and set readonly attribute again
         form.job_type.choices = interpreter_choices
         form.job_id.render_kw = {'readonly': True}
-        form.job_id.data = job_id # Ensure job_id data is set even on failed POST
+        form.job_id.data = job_id
 
-    # GET request or validation failed on POST
-    # Form instance (either from GET pre-population or failed POST) is passed
     return render_template("add_edit_job.html", form=form, mode='edit', job_id=job_id)
 
 
 @bp.route("/delete/<job_id>", methods=["POST"]) # Use POST for deletion
 def delete_job(job_id):
     """Route to handle deleting a job."""
-    config_path = current_app.config.get('SCHEDULER_CONFIG', {}).get('_config_file_path')
+    config = g.get('config', {})
+    config_path = config.get('_config_file_path')
+
     if not config_path:
         flash("Configuration file path not found in application settings.", "error")
         return redirect(url_for('routes.index'))
 
-    config = _load_config_or_flash(config_path)
-    if config is None:
+    # Load fresh config to modify
+    config_to_edit = _load_config_or_flash(config_path)
+    if config_to_edit is None:
         return redirect(url_for('routes.index'))
 
-    jobs = config.get("jobs", {})
+    jobs = config_to_edit.get("jobs", {})
 
     if job_id not in jobs:
         logger.warning(f"Delete attempt failed: Job ID '{job_id}' not found in config.")
         flash(f"Job ID '{job_id}' not found.", "error")
         raise NotFound() # Return 404
 
-    # Remove job from config dictionary
-    del jobs[job_id]
+    # Store original job data in case save fails and we need to revert web UI config
+    original_job_data = jobs.pop(job_id) # Remove job from config dictionary
 
     # Save updated config back to file
-    if _save_config_or_flash(config_path, config):
-        # Also remove from running scheduler (Phase 4 - Placeholder)
-        # scheduler = g.get('scheduler')
-        # if scheduler:
-        #     remove_job_from_scheduler(job_id) # Use core function
-        flash(f"Job '{job_id}' deleted successfully!", "success")
+    if _save_config_or_flash(config_path, config_to_edit):
+        # Flash message handled by _save_config_or_flash
+        # flash(f"Job '{job_id}' deleted successfully!", "success")
+        pass # Success message handled by _save_config_or_flash
     else:
         # Saving failed, error flashed by helper
-        # Re-add job to config temporarily if save failed? No, maybe better to leave it deleted
-        # but warn the user the file wasn't saved.
-        flash(f"Job '{job_id}' was removed from memory, but the configuration file could not be saved.", "error")
-
+        # Since saving the file failed, the daemon wasn't signaled and the web UI's
+        # in-memory config wasn't updated by _save_config_or_flash.
+        # We should probably revert the change in the currently loaded config_to_edit
+        # although it won't be used further in this request.
+        jobs[job_id] = original_job_data # Revert deletion in local copy
+        flash(f"Job '{job_id}' could not be deleted because the configuration file could not be saved.", "error")
 
     return redirect(url_for('routes.index'))
