@@ -25,6 +25,13 @@ except ImportError as e:
 # Create CSRFProtect instance outside the factory
 csrf = CSRFProtect()
 
+# --- Calculate Absolute Path for Templates ---
+# Assumes this file (web/__init__.py) is one level below the project root
+project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+template_dir = os.path.join(project_root, 'templates')
+static_dir = os.path.join(project_root, 'static')
+# ---
+
 def create_app(scheduler_config: Dict[str, Any], scheduler_instance: BackgroundScheduler) -> Flask:
     """
     Application factory function.
@@ -37,9 +44,13 @@ def create_app(scheduler_config: Dict[str, Any], scheduler_instance: BackgroundS
         A configured Flask application instance.
     """
     app = Flask(__name__,
-                template_folder='../templates', # Point to templates dir outside 'web'
-                static_folder='../static'       # Point to static dir outside 'web'
+                # Use the calculated absolute paths
+                template_folder=template_dir,
+                static_folder=static_dir
                 )
+    logging.info(f"Flask using template folder: {app.template_folder}")
+    logging.info(f"Flask using static folder: {app.static_folder}")
+
 
     # --- Use Provided Configuration ---
     app.config['SCHEDULER_CONFIG'] = scheduler_config
