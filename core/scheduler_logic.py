@@ -2,7 +2,7 @@
 
 """
 Core logic for the AVScheduler, including job execution, logging,
-and interaction with the APScheduler instance.
+and interaction with the APScheduler instance and starting the web UI.
 """
 
 import os
@@ -10,10 +10,11 @@ import toml
 import logging
 import signal
 import sys
-import time # Import time for potential sleep, though pause is better
+import time
 from datetime import datetime
 from subprocess import Popen, PIPE, TimeoutExpired
 from typing import Dict, Any, Optional
+from threading import Thread # Import Thread
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -25,6 +26,14 @@ from apscheduler.jobstores.base import JobLookupError
 from .database import init_db as core_init_db, log_job_execution
 # Assuming condition evaluation is in core.conditions
 from .conditions import evaluate_condition
+# Import the Flask app factory
+try:
+    from web import create_app
+except ImportError as e:
+     # This might happen if web dependencies aren't installed, handle gracefully
+     logging.warning(f"Could not import Flask app factory (web.create_app): {e}. Web UI will not start.")
+     create_app = None
+
 
 # Configure logging (consider moving to a central config later)
 # Ensure logs directory exists relative to the project root or a configured path
@@ -79,6 +88,8 @@ def load_config(config_file: str) -> Dict[str, Any]:
     logger.info(f"Loading configuration from: {config_file}")
     try:
         config = toml.load(config_file)
+        # Store the path from where the config was loaded for potential use later (e.g., reload)
+        config["_config_file_path"] = config_file
     except toml.TomlDecodeError as e:
         logger.error(f"Error decoding TOML configuration file '{config_file}': {e}")
         raise
@@ -435,6 +446,40 @@ def load_jobs_from_config(config: Dict[str, Any]):
     logger.info("Job loading complete.")
 
 
+# --- Web UI Control ---
+
+def start_web_ui_thread(config: Dict[str, Any]):
+    """
+    Starts the Flask web UI in a separate daemon thread.
+    """
+    if create_app is None:
+         logger.warning("Flask app factory not available. Cannot start web UI.")
+         return None # Indicate web UI thread was not started
+
+    config_path = config.get("_config_file_path") # Get original config path
+    web_host = config.get("web_server", {}).get("host", "127.0.0.1")
+    web_port = config.get("web_server", {}).get("port", 5000)
+
+    def run_flask():
+        try:
+            # Create app using the factory, passing the config path
+            flask_app = create_app(config_path=config_path)
+            logger.info(f"Starting Flask web server on http://{web_host}:{web_port}...")
+            # Run the Flask development server
+            # use_reloader=False is crucial when running inside another process/thread
+            # debug=False is recommended for this setup
+            flask_app.run(host=web_host, port=web_port, debug=False, use_reloader=False)
+            logger.info("Flask web server thread finished.") # Should not happen unless error
+        except Exception as e:
+            logger.error(f"Flask web server thread failed: {e}", exc_info=True)
+
+    # Start Flask in a daemon thread so it doesn't block scheduler shutdown
+    flask_thread = Thread(target=run_flask, daemon=True, name="FlaskWebServerThread")
+    flask_thread.start()
+    logger.info("Flask web server thread started.")
+    return flask_thread
+
+
 # --- Daemon Control ---
 
 # Store the original config for reload handler
@@ -499,13 +544,12 @@ def reload_config_handler(signum, frame):
 
 def start_scheduler_process(config: Dict[str, Any]):
     """
-    Initializes the database, loads jobs, and starts the scheduler loop.
-    Handles PID file creation/removal and signal handling (TERM, INT, HUP).
-    This is the main function for the scheduler process.
+    Initializes the database, loads jobs, starts the web UI (if available),
+    and starts the scheduler loop. Handles PID file creation/removal and signal handling.
     """
     global _current_config
     _current_config = config # Store config for reload handler
-    config_path = config.get("_config_file_path") # Assumes path was added if needed later
+    config_path = config.get("_config_file_path") # Assumes path was added during load_config
 
     pid_file = config.get("settings", {}).get("pid_file")
     db_path = config.get("settings", {}).get("db_path")
@@ -529,16 +573,21 @@ def start_scheduler_process(config: Dict[str, Any]):
     # --- Setup signal handling ---
     # Use a wrapper to pass config to the shutdown handler
     def term_handler(signum, frame):
+        # Pass the *currently stored* config to shutdown
         shutdown_scheduler(_current_config, signum, frame)
 
     signal.signal(signal.SIGTERM, term_handler)
     signal.signal(signal.SIGINT, term_handler) # Handle Ctrl+C gracefully
     signal.signal(signal.SIGHUP, reload_config_handler) # Handle reload signal
 
+    web_thread = None
     try:
         # Initialize Database
         logger.info("Initializing database connection...")
         core_init_db(db_path) # Use the function from core.database
+
+        # Start Web UI in a thread (if available)
+        web_thread = start_web_ui_thread(config)
 
         # Load jobs into scheduler
         logger.info("Loading jobs into scheduler...")
