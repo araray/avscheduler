@@ -17,6 +17,34 @@ bp = Blueprint('routes', __name__)
 
 logger = logging.getLogger(__name__)
 
+
+# --- Helper Functions ---
+
+def get_schedule_display(job_config: dict) -> str:
+    """Generates a display string for the job's schedule."""
+    schedule_type = job_config.get("schedule_type", "N/A")
+    if schedule_type == "cron":
+        return f"Cron: {job_config.get('schedule', 'Not Set')}"
+    elif schedule_type == "interval":
+        secs = job_config.get('interval_seconds', 'N/A')
+        return f"Interval: Every {secs}s"
+    elif schedule_type == "date":
+        run_date = job_config.get('run_date', 'Not Set')
+        # Attempt to format if it's a datetime object, otherwise show string
+        try:
+             if isinstance(run_date, str): # If loaded from config initially
+                  from datetime import datetime
+                  dt_obj = datetime.fromisoformat(run_date)
+                  return f"Date: {dt_obj.strftime('%Y-%m-%d %H:%M:%S')}"
+             return f"Date: {run_date.strftime('%Y-%m-%d %H:%M:%S')}" # If already datetime
+        except (ValueError, AttributeError):
+             return f"Date: {run_date}" # Fallback to string representation
+    else:
+        return "Schedule: N/A"
+
+
+# --- Routes ---
+
 @bp.route("/")
 def index():
     """
@@ -29,7 +57,8 @@ def index():
 
     if session is None:
         flash("Database connection not available.", "error")
-        return render_template("index.html", jobs=jobs_summary)
+        # Pass the helper function even if DB fails, so base template doesn't break if used there
+        return render_template("index.html", jobs=jobs_summary, get_schedule_display=get_schedule_display)
     if scheduler is None:
          # Don't flash error here, maybe scheduler isn't running but we can still show logs
          logger.warning("Scheduler instance not available in web context. Next run times will be unavailable.")
@@ -45,6 +74,7 @@ def index():
 
         for job_id in job_ids_from_config:
             job_info = config.get('jobs', {}).get(job_id, {})
+            # Pass job_id to get_latest_job_log
             latest_log = get_latest_job_log(job_id) # Uses DB session via g
 
             # Get next execution time from the scheduler instance
@@ -53,8 +83,12 @@ def index():
                 try:
                     apscheduler_job = scheduler.get_job(job_id)
                     if apscheduler_job and apscheduler_job.next_run_time:
-                        # Format datetime nicely
-                        next_execution = apscheduler_job.next_run_time.strftime('%Y-%m-%d %H:%M:%S %Z')
+                        # Format datetime nicely, handling potential timezone awareness
+                        next_run_time_str = apscheduler_job.next_run_time.strftime('%Y-%m-%d %H:%M:%S')
+                        tz_name = apscheduler_job.next_run_time.tzname()
+                        if tz_name:
+                             next_run_time_str += f" {tz_name}"
+                        next_execution = next_run_time_str
                     elif apscheduler_job:
                         next_execution = "Scheduled (no next run)" # e.g., paused or finished
                     else:
@@ -74,12 +108,18 @@ def index():
                 "next_execution": next_execution,
                 "condition": job_info.get("condition", "N/A"),
                 "type": job_info.get("type", "N/A"),
-                "schedule_info": get_schedule_display(job_info), # Helper for schedule display
+                # get_schedule_display is now passed globally to the template context below
+                # "schedule_info": get_schedule_display(job_info),
             })
 
     except SQLAlchemyError as e:
-        logger.error(f"Database error on index page: {e}", exc_info=True)
-        flash("Error retrieving job status from database.", "error")
+        # Catch specific OperationalError for missing columns
+        if "no such column" in str(e).lower():
+             logger.error(f"Database schema mismatch: {e}. Try deleting and recreating the database file.", exc_info=True)
+             flash(f"Database Error: Schema mismatch detected ({e}). Please recreate the database.", "error")
+        else:
+             logger.error(f"Database error on index page: {e}", exc_info=True)
+             flash("Error retrieving job status from database.", "error")
     except Exception as e:
         logger.error(f"Unexpected error on index page: {e}", exc_info=True)
         flash("An unexpected error occurred.", "error")
@@ -87,7 +127,8 @@ def index():
     # Sort jobs by ID for consistent display
     jobs_summary.sort(key=lambda j: j['id'])
 
-    return render_template("index.html", jobs=jobs_summary)
+    # Pass the helper function to the template context
+    return render_template("index.html", jobs=jobs_summary, get_schedule_display=get_schedule_display)
 
 
 @bp.route("/job/<job_id>")
@@ -101,25 +142,30 @@ def job_details(job_id):
 
     if session is None:
         flash("Database connection not available.", "error")
-        return render_template("job_details.html", job_id=job_id, logs=logs, job_config=job_config)
+        # Pass the helper function even if DB fails
+        return render_template("job_details.html", job_id=job_id, logs=logs, job_config=job_config, get_schedule_display=get_schedule_display)
 
     try:
         # Retrieve logs using the function from core.database (uses g.db_session)
         logs = get_job_logs(job_id, limit=100) # Get recent 100 logs
     except SQLAlchemyError as e:
-        logger.error(f"Database error retrieving logs for job '{job_id}': {e}", exc_info=True)
-        flash(f"Error retrieving logs for job '{job_id}'.", "error")
+        # Catch specific OperationalError for missing columns
+        if "no such column" in str(e).lower():
+             logger.error(f"Database schema mismatch retrieving logs for '{job_id}': {e}. Try deleting and recreating the database file.", exc_info=True)
+             flash(f"Database Error: Schema mismatch detected ({e}). Please recreate the database.", "error")
+        else:
+             logger.error(f"Database error retrieving logs for job '{job_id}': {e}", exc_info=True)
+             flash(f"Error retrieving logs for job '{job_id}'.", "error")
     except Exception as e:
         logger.error(f"Unexpected error retrieving logs for job '{job_id}': {e}", exc_info=True)
         flash("An unexpected error occurred.", "error")
 
-
-    return render_template("job_details.html", job_id=job_id, logs=logs, job_config=job_config)
+    # Pass the helper function to the template context
+    return render_template("job_details.html", job_id=job_id, logs=logs, job_config=job_config, get_schedule_display=get_schedule_display)
 
 
 # Note: Log deletion was originally a GET request, which is bad practice for destructive actions.
 # It should be a POST request, ideally triggered by a form/button.
-# For Phase 1, we keep the redirect logic but acknowledge it needs changing in Phase 2/3.
 @bp.route("/delete_logs/<job_id>", methods=["POST"]) # Changed to POST
 def delete_logs(job_id):
     """
@@ -150,19 +196,3 @@ def delete_logs(job_id):
 
     # Redirect back to the job details page after deletion attempt
     return redirect(url_for('routes.job_details', job_id=job_id))
-
-
-# --- Helper Functions ---
-
-def get_schedule_display(job_config: dict) -> str:
-    """Generates a display string for the job's schedule."""
-    schedule_type = job_config.get("schedule_type", "N/A")
-    if schedule_type == "cron":
-        return f"Cron: {job_config.get('schedule', 'Not Set')}"
-    elif schedule_type == "interval":
-        secs = job_config.get('interval_seconds', 'N/A')
-        return f"Interval: Every {secs}s"
-    elif schedule_type == "date":
-        return f"Date: {job_config.get('run_date', 'Not Set')}"
-    else:
-        return "Schedule: N/A"
