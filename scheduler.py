@@ -2,44 +2,70 @@
 
 """
 Main entry point for starting the AVScheduler daemon process.
-Loads configuration and delegates to the core scheduler logic.
+Loads configuration, initializes DB, starts Web UI thread, and starts scheduler logic.
 """
 
 import os
 import sys
 import argparse
 import logging
+from threading import Thread
 
 # Adjust path to import from core and utils if necessary
 project_root = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, project_root)
 
 try:
-    from core.scheduler_logic import load_config, start_scheduler_process, logger, read_pid, is_process_running, remove_pid
-    from utils import get_valid_directory # Assuming utils.py is still relevant
+    from core.config_loader import load_config
+    from core.scheduler_logic import start_scheduler_process, scheduler as global_scheduler, logger
+    from core.database import init_db as core_init_db
+    from utils import get_valid_directory
+    # Import create_app safely
+    try:
+        from web import create_app
+    except ImportError as e:
+        logging.warning(f"Could not import Flask app factory (web.create_app): {e}. Web UI will not start.")
+        create_app = None
 except ImportError as e:
     print(f"Error importing core modules: {e}", file=sys.stderr)
     print("Ensure the project structure is correct and PYTHONPATH is set if needed.", file=sys.stderr)
     sys.exit(1)
 
-# Determine the default config file path relative to this script or project root
-# Use get_valid_directory to find the base path if needed
+# Default config path resolution
 try:
     base_dir = get_valid_directory()
-    if base_dir:
-        DEFAULT_CONFIG_FILE = os.path.join(base_dir, "config.toml")
-    else:
-        # Fallback if get_valid_directory fails
-        DEFAULT_CONFIG_FILE = os.path.join(project_root, "config.toml")
+    DEFAULT_CONFIG_FILE = os.path.join(base_dir or project_root, "config.toml")
 except Exception as e:
     print(f"Error determining default config path: {e}", file=sys.stderr)
-    # Fallback to a simple relative path
     DEFAULT_CONFIG_FILE = os.path.join(project_root, "config.toml")
 
+def start_web_ui_in_thread(config: dict, scheduler_instance):
+    """Starts the Flask app in a daemon thread."""
+    if create_app is None:
+        logger.warning("Flask app factory not available. Cannot start web UI.")
+        return None
+
+    web_host = config.get("web_server", {}).get("host", "127.0.0.1")
+    web_port = config.get("web_server", {}).get("port", 5000)
+
+    def run_flask():
+        try:
+            # Create app using the factory, passing config and scheduler instance
+            flask_app = create_app(scheduler_config=config, scheduler_instance=scheduler_instance)
+            logger.info(f"Starting Flask web server on http://{web_host}:{web_port}...")
+            flask_app.run(host=web_host, port=web_port, debug=False, use_reloader=False)
+            logger.info("Flask web server thread finished.")
+        except Exception as e:
+            logger.error(f"Flask web server thread failed: {e}", exc_info=True)
+
+    flask_thread = Thread(target=run_flask, daemon=True, name="FlaskWebServerThread")
+    flask_thread.start()
+    logger.info("Flask web server thread started.")
+    return flask_thread
 
 def main():
     """
-    Parses command-line arguments and starts the scheduler daemon.
+    Parses arguments, loads config, starts DB, Web UI, and Scheduler.
     """
     parser = argparse.ArgumentParser(description="AVScheduler Daemon Runner")
     parser.add_argument(
@@ -47,33 +73,48 @@ def main():
         default=DEFAULT_CONFIG_FILE,
         help=f"Path to the configuration file (default: {DEFAULT_CONFIG_FILE})"
     )
-    # Add other daemon-specific arguments if needed (e.g., --foreground)
-    # The --daemonize flag is handled by the service manager (systemd) or process runner (like nohup)
-    # The core logic assumes it's running *as* the daemon process.
-
     args = parser.parse_args()
 
+    config = None # Define config here to allow access in except block
     try:
-        # Load configuration
+        # 1. Load Configuration
         config = load_config(args.config)
+        db_path = config.get("settings", {}).get("db_path")
+        if not db_path:
+             logger.critical("DB path not found in configuration. Exiting.")
+             sys.exit(1)
 
-        # Start the main scheduler process logic
-        logger.info("Starting AVScheduler daemon...")
-        start_scheduler_process(config) # This function now handles the main loop and PID management
+        # 2. Initialize Database
+        logger.info(f"Initializing database: {db_path}")
+        core_init_db(db_path)
+
+        # 3. Start Web UI Thread
+        logger.info("Attempting to start Web UI thread...")
+        web_thread = start_web_ui_in_thread(config, global_scheduler)
+        if web_thread:
+             logger.info("Web UI thread initiated.")
+        else:
+             logger.warning("Web UI thread could not be started.")
+
+        # 4. Start the main scheduler process logic (blocking)
+        logger.info("Starting AVScheduler core process...")
+        # Pass the already loaded config
+        start_scheduler_process(config)
 
     except FileNotFoundError:
         logger.critical(f"Configuration file not found: {args.config}")
         sys.exit(1)
     except Exception as e:
-        # Catch any other unexpected errors during startup
         logger.critical(f"Failed to start scheduler daemon: {e}", exc_info=True)
-        # Attempt cleanup if PID file was created by load_config/start_scheduler_process
+        # Attempt cleanup if PID file was created by start_scheduler_process
         try:
-            pid_file = config.get("settings", {}).get("pid_file")
-            if pid_file and os.path.exists(pid_file):
-                 current_pid = read_pid(pid_file)
-                 if current_pid == os.getpid(): # Only remove if it's our PID
-                     remove_pid(pid_file)
+            if config: # Check if config was loaded before error
+                 pid_file = config.get("settings", {}).get("pid_file")
+                 if pid_file and os.path.exists(pid_file):
+                      from core.scheduler_logic import read_pid, remove_pid # Import here for cleanup
+                      current_pid = read_pid(pid_file)
+                      if current_pid == os.getpid():
+                           remove_pid(pid_file)
         except Exception as cleanup_e:
              logger.error(f"Error during cleanup after startup failure: {cleanup_e}")
         sys.exit(1)
