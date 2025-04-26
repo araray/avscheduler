@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_form_helpers.html" import render_field %} {# Assuming a helper macro file exists or will be created #}
+{% from "_from_helpers.html" import render_field %} {# Corrected filename here #}
 
 {% block title %}AVScheduler - {{ 'Edit Job' if mode == 'edit' else 'Add New Job' }}{% endblock %}
 
@@ -25,6 +25,7 @@
     <div class="card mb-4">
         <div class="card-header">Basic Job Information</div>
         <div class="card-body">
+            {# Pass render_kw from route for readonly attribute #}
             {{ render_field(form.job_id, class="form-control", **form.job_id.render_kw) }}
             {{ render_field(form.name, class="form-control") }}
             {{ render_field(form.job_type, class="form-select") }} {# Use form-select for <select> #}
