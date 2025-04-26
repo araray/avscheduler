@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+        <link
+            href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
+            rel="stylesheet"
+            integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH"
+            crossorigin="anonymous"
+        />
+
+        <title>{% block title %}AVScheduler{% endblock %}</title>
+
+        <style>
+            /* Optional: Add some basic custom styles */
+            body {
+                padding-top: 5rem; /* Adjust based on navbar height */
+                background-color: #f8f9fa; /* Light grey background */
+            }
+            .content-wrapper {
+                background-color: #ffffff; /* White background for content */
+                padding: 2rem;
+                border-radius: 0.5rem;
+                box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075);
+                margin-top: 1.5rem;
+            }
+            .table th {
+                background-color: #e9ecef; /* Light header for tables */
+            }
+            .navbar {
+                box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075);
+            }
+            .alert {
+                border-radius: 0.5rem;
+            }
+            .btn {
+                border-radius: 0.375rem; /* Slightly rounded buttons */
+            }
+            .footer {
+                margin-top: 2rem;
+                padding: 1rem 0;
+                text-align: center;
+                font-size: 0.9em;
+                color: #6c757d;
+            }
+        </style>
+    </head>
+    <body>
+        <nav class="navbar navbar-expand-md navbar-dark bg-dark fixed-top">
+            <div class="container-fluid">
+                <a class="navbar-brand" href="{{ url_for('routes.index') }}"
+                    >AVScheduler</a
+                >
+                <button
+                    class="navbar-toggler"
+                    type="button"
+                    data-bs-toggle="collapse"
+                    data-bs-target="#navbarMain"
+                    aria-controls="navbarMain"
+                    aria-expanded="false"
+                    aria-label="Toggle navigation"
+                >
+                    <span class="navbar-toggler-icon"></span>
+                </button>
+                <div class="collapse navbar-collapse" id="navbarMain">
+                    <ul class="navbar-nav me-auto mb-2 mb-md-0">
+                        <li class="nav-item">
+                            <a
+                                class="nav-link active"
+                                aria-current="page"
+                                href="{{ url_for('routes.index') }}"
+                                >Dashboard</a
+                            >
+                        </li>
+                    </ul>
+                </div>
+            </div>
+        </nav>
+
+        <main class="container">
+            {% with messages = get_flashed_messages(with_categories=true) %} {%
+            if messages %} {% for category, message in messages %}
+            <div
+                class="alert alert-{{ category if category else 'info' }} alert-dismissible fade show mt-3"
+                role="alert"
+            >
+                {{ message }}
+                <button
+                    type="button"
+                    class="btn-close"
+                    data-bs-dismiss="alert"
+                    aria-label="Close"
+                ></button>
+            </div>
+            {% endfor %} {% endif %} {% endwith %}
+
+            <div class="content-wrapper">{% block content %}{% endblock %}</div>
+        </main>
+
+        <footer class="footer">
+            <div class="container">
+                <span>AVScheduler | Powered by Flask & Bootstrap</span>
+            </div>
+        </footer>
+
+        <script
+            src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"
+            integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz"
+            crossorigin="anonymous"
+        ></script>
+
+        {% block scripts %}{% endblock %}
+    </body>
+</html>

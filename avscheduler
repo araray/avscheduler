@@ -24,4 +24,6 @@ fi
 #echo "AVScheduler directory: ${dir_avscheduler}"
 
 #cd ${dir_avscheduler}
+source ${dir_avscheduler}/venv/bin/activate
 python ${dir_avscheduler}/cli.py $@
+deactivate
