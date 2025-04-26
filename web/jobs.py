@@ -8,6 +8,7 @@ Handles interaction with the configuration file and potentially the scheduler.
 import os
 import toml
 import logging
+import uuid # Import for generating IDs
 from flask import (
     Blueprint, render_template, redirect, url_for, flash, request, current_app, g
 )
@@ -75,6 +76,14 @@ def _trigger_scheduler_reload():
     logger.info("Placeholder: Triggering scheduler config reload (needs Phase 4 implementation).")
     flash("Configuration saved. Please manually reload or restart the scheduler daemon for changes to take full effect.", "warning")
 
+def _generate_unique_job_id(existing_ids: set) -> str:
+    """Generates a unique 8-character hex job ID."""
+    while True:
+        new_id = uuid.uuid4().hex[:8] # Generate 8-char hex ID
+        if new_id not in existing_ids:
+            return new_id
+        logger.debug(f"Generated job ID {new_id} collided, regenerating.")
+
 
 # --- Routes ---
 
@@ -96,11 +105,19 @@ def add_job():
     form.job_type.choices = interpreter_choices
 
     if form.validate_on_submit():
-        job_id = form.job_id.data
         jobs = config.setdefault("jobs", {})
+        job_id = form.job_id.data # Get user input (might be empty)
+        generated_id = False
 
-        if job_id in jobs:
-            flash(f"Job ID '{job_id}' already exists. Please choose a unique ID.", "error")
+        # --- Auto-generate ID if not provided ---
+        if not job_id:
+            job_id = _generate_unique_job_id(set(jobs.keys()))
+            generated_id = True
+            logger.info(f"No Job ID provided, generated unique ID: {job_id}")
+        # --- End Auto-generation ---
+
+        elif job_id in jobs: # Check for collision only if user provided ID
+            flash(f"Job ID '{job_id}' already exists. Please choose a unique ID or leave blank to auto-generate.", "error")
             # Don't redirect, let user fix the ID
             return render_template("add_edit_job.html", form=form, mode='add', job_id=None)
 
@@ -132,7 +149,10 @@ def add_job():
 
         # Save updated config back to file
         if _save_config_or_flash(config_path, config):
-            flash(f"Job '{job_id}' added successfully!", "success")
+            if generated_id:
+                flash(f"Job added successfully with generated ID '{job_id}'!", "success")
+            else:
+                flash(f"Job '{job_id}' added successfully!", "success")
             return redirect(url_for('routes.index'))
         else:
             # Saving failed, stay on page, error flashed by helper
@@ -166,15 +186,17 @@ def edit_job(job_id):
         flash(f"Job ID '{job_id}' not found.", "error")
         raise NotFound() # Return 404
 
-    # Create form instance, pre-populating with existing data for GET
-    # For POST, WTForms automatically uses submitted data if validation fails
-    form = JobForm(data=job_data) # Pass existing data dict
+    # Create form instance. For GET, pre-populate using 'obj'.
+    # For POST, WTForms automatically uses submitted data if validation fails.
+    form = JobForm(obj=job_data) # Use obj for pre-population
 
-    # Handle specific field name differences and types for pre-population
-    form.job_type.data = job_data.get('type') # Map 'type' from config to 'job_type' field
+    # Handle specific field name differences and types for pre-population if needed
+    # (obj handles basic mapping, but explicit mapping might be needed for complex cases)
+    form.job_type.data = job_data.get('type') # Explicitly map 'type' from config
     if job_data.get('run_date') and isinstance(job_data.get('run_date'), str):
          try:
              from datetime import datetime
+             # Set the data attribute directly for DateTimeField from string
              form.run_date.data = datetime.strptime(job_data['run_date'], '%Y-%m-%d %H:%M:%S')
          except ValueError:
              logger.warning(f"Could not parse run_date '{job_data['run_date']}' for job '{job_id}'.")
@@ -185,10 +207,13 @@ def edit_job(job_id):
     form.job_type.choices = interpreter_choices
     # Set job_id field as read-only for editing
     form.job_id.render_kw = {'readonly': True}
+    # Manually set job_id data for the form instance as it's readonly
+    form.job_id.data = job_id
 
 
     if form.validate_on_submit():
         # Update job data in the config dictionary
+        # Use job_id from URL parameter, not form data (as it's readonly)
         updated_job_data = {
             "type": form.job_type.data,
             "schedule_type": form.schedule_type.data,
@@ -215,7 +240,7 @@ def edit_job(job_id):
         elif form.schedule_type.data == 'date':
             updated_job_data["run_date"] = form.run_date.data.strftime('%Y-%m-%d %H:%M:%S') if form.run_date.data else None
 
-        # Replace the old job data with the updated data
+        # Replace the old job data with the updated data using the job_id from URL
         jobs[job_id] = updated_job_data
 
         # Save updated config back to file
@@ -228,6 +253,7 @@ def edit_job(job_id):
              form = JobForm() # Recreate form to populate from request.form
              form.job_type.choices = interpreter_choices # Repopulate choices
              form.job_id.render_kw = {'readonly': True} # Keep ID readonly
+             form.job_id.data = job_id # Re-set the job_id data
              return render_template("add_edit_job.html", form=form, mode='edit', job_id=job_id)
 
     elif request.method == "POST":
@@ -237,6 +263,7 @@ def edit_job(job_id):
         # Need to re-populate dynamic choices and set readonly attribute again
         form.job_type.choices = interpreter_choices
         form.job_id.render_kw = {'readonly': True}
+        form.job_id.data = job_id # Ensure job_id data is set even on failed POST
 
     # GET request or validation failed on POST
     # Form instance (either from GET pre-population or failed POST) is passed

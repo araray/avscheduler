@@ -4,6 +4,7 @@
 Defines WTForms for the AVScheduler web interface.
 """
 
+import uuid # Import for potential default generation (though logic is in route)
 from flask_wtf import FlaskForm
 from wtforms import (
     StringField, SelectField, IntegerField, DateTimeField,
@@ -18,13 +19,13 @@ class JobForm(FlaskForm):
 
     # Basic Job Info
     job_id = StringField(
-        'Job ID',
+        'Job ID (Optional)', # Changed label slightly
         validators=[
-            DataRequired(),
+            Optional(), # Changed from DataRequired to Optional
             Length(min=1, max=100),
-            Regexp(r'^[a-zA-Z0-9_-]+$', message="Job ID can only contain letters, numbers, underscores, and hyphens.")
+            Regexp(r'^[a-zA-Z0-9_-]+$', message="If provided, Job ID can only contain letters, numbers, underscores, and hyphens.")
         ],
-        description="Unique identifier for the job (e.g., 'daily_backup', 'report_job_1'). Cannot be changed after creation."
+        description="Unique identifier (e.g., 'daily_backup'). Leave blank to auto-generate an ID for new jobs. Cannot be changed after creation."
     )
     name = StringField(
         'Display Name (Optional)',
