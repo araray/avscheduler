@@ -73,7 +73,7 @@ A Python-based job scheduler designed to dynamically manage, execute, and monito
 ### **Step 1: Clone the Repository**
 
 ```bash
-git clone [https://github.com/araray/avscheduler.git](https://github.com/araray/avscheduler.git)
+git clone https://github.com/araray/avscheduler.git
 cd avscheduler
 ````
 
