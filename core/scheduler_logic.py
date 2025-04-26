@@ -10,6 +10,7 @@ import toml
 import logging
 import signal
 import sys
+import time # Import time for potential sleep, though pause is better
 from datetime import datetime
 from subprocess import Popen, PIPE, TimeoutExpired
 from typing import Dict, Any, Optional
@@ -27,15 +28,24 @@ from .conditions import evaluate_condition
 
 # Configure logging (consider moving to a central config later)
 # Ensure logs directory exists relative to the project root or a configured path
-logs_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs") # Assumes logs dir is one level up from core
+# Corrected path assumption: logs dir relative to project root (where scheduler.py/cli.py are)
+project_root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+logs_dir = os.path.join(project_root_dir, "logs")
 os.makedirs(logs_dir, exist_ok=True)
 log_file_path = os.path.join(logs_dir, "scheduler.log")
 
+# Ensure logs can be written - consider file handler level setting
+file_handler = logging.FileHandler(log_file_path, mode='a')
+file_handler.setLevel(logging.INFO) # Set level for file handler if needed
+
+stream_handler = logging.StreamHandler(sys.stdout)
+stream_handler.setLevel(logging.INFO) # Set level for console handler
+
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG, # Set root logger level (can be overridden by handlers)
     handlers=[
-        logging.FileHandler(log_file_path, mode='a'),
-        logging.StreamHandler(sys.stdout) # Also log to console
+        file_handler,
+        stream_handler # Also log to console
     ],
     format="%(asctime)s [%(levelname)s] [%(name)s] %(message)s",
 )
@@ -83,6 +93,7 @@ def load_config(config_file: str) -> Dict[str, Any]:
         config["settings"]["db_path"] = default_db_path
         logger.info(f"Config missing 'db_path', defaulting to: {default_db_path}")
     if "pid_file" not in config["settings"]:
+        # Default PID path relative to project root's logs dir
         default_pid_path = os.path.join(logs_dir, "avscheduler.pid")
         config["settings"]["pid_file"] = default_pid_path
         logger.info(f"Config missing 'pid_file', defaulting to: {default_pid_path}")
@@ -264,19 +275,7 @@ def execute_job_command(job_id: str, interpreter: str, command: str, env_file: O
     if stderr_str:
         logger.warning(f"Job '{job_id}' STDERR:\n{stderr_str.strip()}")
 
-    # Log to database using the function from core.database
-    try:
-        # Ensure db_path is available (e.g., from config passed to this module)
-        # This needs refinement - how does execute_job_command get the config?
-        # Temporary solution: Assume config is loaded globally or passed somehow.
-        # This highlights the need for better state management (e.g., class-based approach).
-        # For now, we'll skip DB logging here and handle it in the wrapper `run_job_wrapper`.
-        pass # DB logging moved to wrapper
-    except NameError:
-         logger.error("Failed to log job to DB: Config or DB path not accessible.")
-    except Exception as e:
-        logger.error(f"Unexpected error logging job '{job_id}' to database: {e}", exc_info=True)
-
+    # DB logging moved to wrapper `run_job_wrapper`.
 
     return exit_code, execution_time, stdout_str, stderr_str
 
@@ -287,9 +286,13 @@ def run_job_wrapper(job_id: str, config: Dict[str, Any]):
     Loads job details, checks conditions, executes the job, and logs to DB.
     """
     logger.info(f"Scheduler triggered for job '{job_id}'")
+    # Reload config within the job execution context? Or rely on the config passed at scheduling time?
+    # Passing config at scheduling time is simpler but won't reflect live config changes
+    # unless the job is rescheduled by reload_config. Let's stick with passed config for now.
     job_config = config.get("jobs", {}).get(job_id)
     if not job_config:
-        logger.error(f"Job configuration for '{job_id}' not found in current config. Skipping.")
+        logger.error(f"Job configuration for '{job_id}' not found in passed config. Skipping.")
+        # Cannot log to DB if config is missing db_path
         return
 
     interpreter_type = job_config.get("type")
@@ -302,11 +305,11 @@ def run_job_wrapper(job_id: str, config: Dict[str, Any]):
 
     if not interpreter_path:
         logger.error(f"Interpreter type '{interpreter_type}' for job '{job_id}' not defined in [interpreters]. Skipping.")
-        log_job_execution(job_id, -5, 0, stderr="Interpreter type not configured") # Log config error
+        if db_path: log_job_execution(job_id, -5, 0, stderr="Interpreter type not configured") # Log config error
         return
     if not command:
         logger.error(f"Job '{job_id}' has no command defined. Skipping.")
-        log_job_execution(job_id, -6, 0, stderr="Job command not defined") # Log config error
+        if db_path: log_job_execution(job_id, -6, 0, stderr="Job command not defined") # Log config error
         return
     if not db_path:
          logger.error(f"Database path not configured in [settings]. Cannot log or check conditions for job '{job_id}'. Skipping.")
@@ -326,7 +329,7 @@ def run_job_wrapper(job_id: str, config: Dict[str, Any]):
                  logger.debug(f"Condition met for job '{job_id}'.")
         except Exception as e:
             logger.error(f"Error evaluating condition for job '{job_id}': {e}. Skipping job.", exc_info=True)
-            # Log condition evaluation error to DB?
+            # Log condition evaluation error to DB
             log_job_execution(job_id, -7, 0, stderr=f"Condition evaluation error: {e}")
             return
 
@@ -434,14 +437,82 @@ def load_jobs_from_config(config: Dict[str, Any]):
 
 # --- Daemon Control ---
 
+# Store the original config for reload handler
+_current_config = {}
+
+def shutdown_scheduler(config: Dict[str, Any], signum=None, frame=None):
+    """
+    Shuts down the APScheduler instance gracefully and removes the PID file.
+    Can be called directly or via signal handler.
+    """
+    pid_file = config.get("settings", {}).get("pid_file") # Get pid_file from passed config
+    if signum:
+        logger.info(f"Received signal {signum}. Shutting down scheduler...")
+    else:
+        logger.info("Initiating scheduler shutdown...")
+
+    logger.info("Attempting graceful shutdown of APScheduler...")
+    try:
+        # wait=False allows signal handler to exit faster, scheduler shuts down in background
+        if scheduler.running:
+            scheduler.shutdown(wait=False)
+            logger.info("APScheduler shutdown initiated.")
+        else:
+            logger.info("APScheduler was not running.")
+    except Exception as e:
+        logger.error(f"Error during scheduler shutdown: {e}", exc_info=True)
+    finally:
+        if pid_file:
+            remove_pid(pid_file) # Remove PID file after shutdown attempt
+        logger.info("Scheduler shutdown process complete.")
+        # Exit the process after handling signal if called by handler
+        if signum:
+            sys.exit(0)
+
+
+def reload_config_handler(signum, frame):
+    """
+    Signal handler for SIGHUP to reload configuration.
+    """
+    global _current_config
+    logger.info(f"Received signal {signum} (SIGHUP). Reloading configuration...")
+    config_path = _current_config.get("_config_file_path") # Retrieve original path
+    if not config_path:
+        logger.error("Cannot reload configuration: Original config file path not stored.")
+        return
+
+    try:
+        new_config = load_config(config_path)
+        # Store the path again in the new config dict for subsequent reloads
+        new_config["_config_file_path"] = config_path
+        _current_config = new_config # Update the global config reference
+        logger.info(f"Successfully reloaded configuration from {config_path}")
+
+        # Reload jobs in the running scheduler
+        load_jobs_from_config(_current_config)
+
+    except FileNotFoundError:
+        logger.error(f"Failed to reload: Configuration file '{config_path}' not found.")
+    except Exception as e:
+        logger.error(f"Failed to reload configuration or reschedule jobs: {e}", exc_info=True)
+
+
 def start_scheduler_process(config: Dict[str, Any]):
     """
     Initializes the database, loads jobs, and starts the scheduler loop.
-    Handles PID file creation and removal.
+    Handles PID file creation/removal and signal handling (TERM, INT, HUP).
     This is the main function for the scheduler process.
     """
+    global _current_config
+    _current_config = config # Store config for reload handler
+    config_path = config.get("_config_file_path") # Assumes path was added if needed later
+
     pid_file = config.get("settings", {}).get("pid_file")
     db_path = config.get("settings", {}).get("db_path")
+
+    if not pid_file or not db_path:
+         logger.critical("Missing 'pid_file' or 'db_path' in settings. Cannot start.")
+         sys.exit(1)
 
     # Check if already running
     existing_pid = read_pid(pid_file)
@@ -455,14 +526,14 @@ def start_scheduler_process(config: Dict[str, Any]):
     # Write new PID file
     write_pid(pid_file)
 
-    # Setup signal handling for graceful shutdown
-    def signal_handler(sig, frame):
-        logger.info(f"Received signal {sig}. Shutting down scheduler...")
-        shutdown_scheduler(config) # Pass config for PID removal
-        sys.exit(0)
+    # --- Setup signal handling ---
+    # Use a wrapper to pass config to the shutdown handler
+    def term_handler(signum, frame):
+        shutdown_scheduler(_current_config, signum, frame)
 
-    signal.signal(signal.SIGTERM, signal_handler)
-    signal.signal(signal.SIGINT, signal_handler) # Handle Ctrl+C
+    signal.signal(signal.SIGTERM, term_handler)
+    signal.signal(signal.SIGINT, term_handler) # Handle Ctrl+C gracefully
+    signal.signal(signal.SIGHUP, reload_config_handler) # Handle reload signal
 
     try:
         # Initialize Database
@@ -473,33 +544,30 @@ def start_scheduler_process(config: Dict[str, Any]):
         logger.info("Loading jobs into scheduler...")
         load_jobs_from_config(config)
 
-        # Start the scheduler's internal loop (blocking)
+        # Start the scheduler's internal loop
         logger.info("Starting APScheduler...")
-        scheduler.start() # This blocks until shutdown is called
+        scheduler.start()
+        logger.info("Scheduler started successfully. Waiting for jobs or signals...")
 
+        # Keep the main thread alive indefinitely until a signal is received
+        # signal.pause() is the cleanest way to do this.
+        while True:
+             signal.pause() # Wait here for signals (TERM, INT, HUP)
+
+    except KeyboardInterrupt:
+        # This might be caught here if signal.pause() is interrupted by Ctrl+C
+        # before the SIGINT handler fully exits.
+        logger.info("KeyboardInterrupt caught in main loop. Initiating shutdown.")
+        # The SIGINT handler should have already called shutdown_scheduler
     except Exception as e:
         logger.critical(f"Critical error during scheduler startup or runtime: {e}", exc_info=True)
         # Ensure PID is removed on critical failure before exit
-        remove_pid(pid_file)
-        sys.exit(1)
+        remove_pid(pid_file) # Attempt cleanup
+        sys.exit(1) # Exit with error code
     finally:
-        # This might not be reached if scheduler.start() blocks indefinitely
-        # and shutdown happens via signal handler.
+        # This block will execute if the loop breaks unexpectedly OR during normal shutdown via sys.exit()
+        # Ensure cleanup happens, though signal handler should manage PID removal on TERM/INT.
         logger.info("Scheduler process final cleanup.")
-        remove_pid(pid_file) # Ensure PID removal on exit
-
-
-def shutdown_scheduler(config: Dict[str, Any]):
-    """
-    Shuts down the APScheduler instance gracefully and removes the PID file.
-    """
-    pid_file = config.get("settings", {}).get("pid_file")
-    logger.info("Attempting graceful shutdown of APScheduler...")
-    try:
-        # wait=False allows signal handler to exit faster, scheduler shuts down in background
-        scheduler.shutdown(wait=False)
-        logger.info("APScheduler shutdown initiated.")
-    except Exception as e:
-        logger.error(f"Error during scheduler shutdown: {e}", exc_info=True)
-    finally:
-        remove_pid(pid_file) # Remove PID file after shutdown attempt
+        # Redundant PID removal check in case signal handler failed or loop exited abnormally
+        if os.path.exists(pid_file) and read_pid(pid_file) == os.getpid():
+             remove_pid(pid_file)
