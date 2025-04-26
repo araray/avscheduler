@@ -8,6 +8,7 @@ Uses the Application Factory pattern.
 import os
 import logging
 from flask import Flask, g
+from flask_wtf.csrf import CSRFProtect # Import CSRFProtect
 from apscheduler.schedulers.background import BackgroundScheduler # Import scheduler type
 from typing import Dict, Any
 
@@ -20,6 +21,9 @@ try:
 except ImportError as e:
     logging.critical(f"Failed to import core modules in web/__init__.py: {e}", exc_info=True)
     raise
+
+# Create CSRFProtect instance outside the factory
+csrf = CSRFProtect()
 
 def create_app(scheduler_config: Dict[str, Any], scheduler_instance: BackgroundScheduler) -> Flask:
     """
@@ -59,8 +63,11 @@ def create_app(scheduler_config: Dict[str, Any], scheduler_instance: BackgroundS
     # --- Configure Flask App Settings ---
     # IMPORTANT: Set a strong secret key in production, potentially via environment variable
     app.config['SECRET_KEY'] = os.environ.get('FLASK_SECRET_KEY', 'dev_secret_key_change_in_prod')
-    # Enable CSRF protection (provided by Flask-WTF)
+    # Enable CSRF protection (provided by Flask-WTF) - Keep this for clarity or if needed by other parts
     app.config['WTF_CSRF_ENABLED'] = True
+    # Explicitly initialize CSRF protection with the app instance
+    csrf.init_app(app)
+    logging.info("CSRF protection initialized.")
     # Add other Flask configurations as needed
 
     # --- Database Session Management (per request) ---
@@ -90,6 +97,8 @@ def create_app(scheduler_config: Dict[str, Any], scheduler_instance: BackgroundS
 
 
     # --- Register Blueprints ---
+    # Wrap blueprint registration in app_context to ensure CSRF is ready? Usually not needed.
+    # with app.app_context(): # <-- Generally not required here
     try:
         from . import routes # Main routes (dashboard, logs)
         app.register_blueprint(routes.bp)
