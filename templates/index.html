@@ -1,12 +1,31 @@
 {% extends "base.html" %} {% block title %}AVScheduler - Dashboard{% endblock %}
 {% block content %}
-<h1 class="mb-4">Job Dashboard</h1>
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1 class="mb-0">Job Dashboard</h1>
+    <a href="{{ url_for('jobs.add_job') }}" class="btn btn-success">
+        <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="16"
+            height="16"
+            fill="currentColor"
+            class="bi bi-plus-circle-fill me-1"
+            viewBox="0 0 16 16"
+        >
+            <path
+                d="M16 8A8 8 0 1 1 0 8a8 8 0 0 1 16 0zM8.5 4.5a.5.5 0 0 0-1 0v3h-3a.5.5 0 0 0 0 1h3v3a.5.5 0 0 0 1 0v-3h3a.5.5 0 0 0 0-1h-3v-3z"
+            />
+        </svg>
+        Add New Job
+    </a>
+</div>
 
 <div class="table-responsive">
-    <table class="table table-striped table-hover table-bordered">
+    <table class="table table-striped table-hover table-bordered align-middle">
+        {# align-middle for button alignment #}
         <thead class="table-dark">
             <tr>
                 <th>Job ID</th>
+                <th>Name</th>
                 <th>Type</th>
                 <th>Schedule</th>
                 <th>Condition</th>
@@ -18,62 +37,127 @@
             </tr>
         </thead>
         <tbody>
-            {% if jobs %} {% for job in jobs %}
+            {% if jobs %} {% for job_data in jobs %} {# Renamed loop variable to
+            avoid conflict #}
             <tr
-                class="{{ 'table-danger' if job.last_exit_code != 'N/A' and job.last_exit_code != 0 else '' }}"
+                class="{{ 'table-danger' if job_data.last_exit_code != 'N/A' and job_data.last_exit_code != 0 else '' }}"
             >
-                <td><strong>{{ job.id }}</strong></td>
-                <td><span class="badge bg-secondary">{{ job.type }}</span></td>
-                <td>{{ job.schedule_info }}</td>
+                <td><strong>{{ job_data.id }}</strong></td>
+                <td>{{ job_data.get('name', '-') }}</td>
+                {# Display optional name #}
+                <td>
+                    <span class="badge bg-secondary">{{ job_data.type }}</span>
+                </td>
+                <td>
+                    {{ get_schedule_display(config.jobs.get(job_data.id, {})) }}
+                </td>
+                {# Pass job config to helper #}
                 <td>
                     <code class="small"
-                        >{{ job.condition if job.condition != 'N/A' else '-'
-                        }}</code
+                        >{{ job_data.condition if job_data.condition != 'N/A'
+                        else '-' }}</code
                     >
                 </td>
-                <td>{{ job.last_execution }}</td>
+                <td>{{ job_data.last_execution }}</td>
                 <td>
-                    {% if job.last_exit_code == 0 %}
+                    {% if job_data.last_exit_code == 0 %}
                     <span class="badge bg-success">Success (0)</span>
-                    {% elif job.last_exit_code == 'N/A' %}
+                    {% elif job_data.last_exit_code == 'N/A' %}
                     <span class="badge bg-light text-dark">N/A</span>
                     {% else %}
                     <span class="badge bg-danger"
-                        >Failed ({{ job.last_exit_code }})</span
+                        >Failed ({{ job_data.last_exit_code }})</span
                     >
                     {% endif %}
                 </td>
-                <td>{{ job.last_execution_time }}</td>
-                <td>{{ job.next_execution }}</td>
+                <td>{{ job_data.last_execution_time }}</td>
+                <td>{{ job_data.next_execution }}</td>
                 <td>
-                    <a
-                        href="{{ url_for('routes.job_details', job_id=job.id) }}"
-                        class="btn btn-primary btn-sm"
-                        title="View Logs"
-                    >
-                        <svg
-                            xmlns="http://www.w3.org/2000/svg"
-                            width="16"
-                            height="16"
-                            fill="currentColor"
-                            class="bi bi-file-earmark-text"
-                            viewBox="0 0 16 16"
+                    <div class="d-flex flex-nowrap">
+                        {# Use flexbox for button group #}
+                        <a
+                            href="{{ url_for('routes.job_details', job_id=job_data.id) }}"
+                            class="btn btn-primary btn-sm me-1"
+                            title="View Logs"
                         >
-                            <path
-                                d="M5.5 7a.5.5 0 0 0 0 1h5a.5.5 0 0 0 0-1h-5zM5 9.5a.5.5 0 0 1 .5-.5h5a.5.5 0 0 1 0 1h-5a.5.5 0 0 1-.5-.5zm0 2a.5.5 0 0 1 .5-.5h2a.5.5 0 0 1 0 1h-2a.5.5 0 0 1-.5-.5z"
+                            <svg
+                                xmlns="http://www.w3.org/2000/svg"
+                                width="16"
+                                height="16"
+                                fill="currentColor"
+                                class="bi bi-file-earmark-text"
+                                viewBox="0 0 16 16"
+                            >
+                                <path
+                                    d="M5.5 7a.5.5 0 0 0 0 1h5a.5.5 0 0 0 0-1h-5zM5 9.5a.5.5 0 0 1 .5-.5h5a.5.5 0 0 1 0 1h-5a.5.5 0 0 1-.5-.5zm0 2a.5.5 0 0 1 .5-.5h2a.5.5 0 0 1 0 1h-2a.5.5 0 0 1-.5-.5z"
+                                />
+                                <path
+                                    d="M14 14V4.5L9.5 0H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2zM9.5 3A1.5 1.5 0 0 0 11 4.5h2V14a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1h5.5v2z"
+                                />
+                            </svg>
+                        </a>
+                        <a
+                            href="{{ url_for('jobs.edit_job', job_id=job_data.id) }}"
+                            class="btn btn-warning btn-sm me-1"
+                            title="Edit Job"
+                        >
+                            <svg
+                                xmlns="http://www.w3.org/2000/svg"
+                                width="16"
+                                height="16"
+                                fill="currentColor"
+                                class="bi bi-pencil-square"
+                                viewBox="0 0 16 16"
+                            >
+                                <path
+                                    d="M15.502 1.94a.5.5 0 0 1 0 .706L14.459 3.69l-2-2L13.502.646a.5.5 0 0 1 .707 0l1.293 1.293zm-1.75 2.456-2-2L4.939 9.21a.5.5 0 0 0-.121.196l-.805 2.414a.25.25 0 0 0 .316.316l2.414-.805a.5.5 0 0 0 .196-.12l6.813-6.814z"
+                                />
+                                <path
+                                    fill-rule="evenodd"
+                                    d="M1 13.5A1.5 1.5 0 0 0 2.5 15h11a1.5 1.5 0 0 0 1.5-1.5v-6a.5.5 0 0 0-1 0v6a.5.5 0 0 1-.5.5h-11a.5.5 0 0 1-.5-.5v-11a.5.5 0 0 1 .5-.5H9a.5.5 0 0 0 0-1H2.5A1.5 1.5 0 0 0 1 2.5v11z"
+                                />
+                            </svg>
+                        </a>
+                        {# Delete button needs to be a form for POST #}
+                        <form
+                            action="{{ url_for('jobs.delete_job', job_id=job_data.id) }}"
+                            method="POST"
+                            class="d-inline"
+                            onsubmit="return confirm('Are you sure you want to delete job \'{{ job_data.id }}\'? This cannot be undone.');"
+                        >
+                            <input
+                                type="hidden"
+                                name="csrf_token"
+                                value="{{ csrf_token() }}"
                             />
-                            <path
-                                d="M14 14V4.5L9.5 0H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2zM9.5 3A1.5 1.5 0 0 0 11 4.5h2V14a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1h5.5v2z"
-                            />
-                        </svg>
-                        Logs
-                    </a>
+                            {# Add CSRF token #}
+                            <button
+                                type="submit"
+                                class="btn btn-danger btn-sm"
+                                title="Delete Job"
+                            >
+                                <svg
+                                    xmlns="http://www.w3.org/2000/svg"
+                                    width="16"
+                                    height="16"
+                                    fill="currentColor"
+                                    class="bi bi-trash3-fill"
+                                    viewBox="0 0 16 16"
+                                >
+                                    <path
+                                        d="M11 1.5v1h3.5a.5.5 0 0 1 0 1h-.538l-.853 10.66A2 2 0 0 1 11.115 16h-6.23a2 2 0 0 1-1.994-1.84L2.038 3.5H1.5a.5.5 0 0 1 0-1H5v-1A1.5 1.5 0 0 1 6.5 0h3A1.5 1.5 0 0 1 11 1.5zm-5 0v1h4v-1a.5.5 0 0 0-.5-.5h-3a.5.5 0 0 0-.5.5zM4.5 5.029l.5 8.5a.5.5 0 1 0 .998-.06l-.5-8.5a.5.5 0 1 0-.998.06zm6.53-.528a.5.5 0 0 0-.528.47l-.5 8.5a.5.5 0 0 0 .998.06l.5-8.5a.5.5 0 0 0-.47-.53z"
+                                    />
+                                </svg>
+                            </button>
+                        </form>
+                    </div>
                 </td>
             </tr>
             {% endfor %} {% else %}
             <tr>
-                <td colspan="9" class="text-center">
-                    No jobs found in configuration or no logs available.
+                <td colspan="10" class="text-center">
+                    {# Increased colspan #} No jobs found in configuration.
+                    Click 'Add New Job' to create one.
                 </td>
             </tr>
             {% endif %}

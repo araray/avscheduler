@@ -1,28 +1,27 @@
-# Core Scheduler & CLI Dependencies
 APScheduler==3.11.0
+blinker==1.9.0
 click==8.1.8
-lockfile==0.12.2  # Often a dependency of python-daemon
-python-daemon==3.1.2 # For daemonization
+croniter==6.0.0
+Flask==3.1.0
+Flask-WTF==1.2.2
+greenlet==3.2.1
+itsdangerous==2.2.0
+Jinja2==3.1.6
+lockfile==0.12.2
+markdown-it-py==3.0.0
+MarkupSafe==3.0.2
+mdurl==0.1.2
+Pygments==2.19.1
+python-daemon==3.1.2
+python-dateutil==2.9.0.post0
+pytz==2025.2
+rich==14.0.0
+six==1.17.0
 SQLAlchemy==2.0.40
 tabulate==0.9.0
 toml==0.10.2
-tzlocal==5.3.1 # Often a dependency of APScheduler
-
-# Web UI Dependencies
-blinker==1.9.0
-Flask==3.1.0
-Flask-WTF==1.2.2
-itsdangerous==2.2.0
-Jinja2==3.1.6
-MarkupSafe==3.0.2
+tqdm==4.67.1
+typing_extensions==4.13.2
+tzlocal==5.3.1
 Werkzeug==3.1.3
 WTForms==3.2.1
-
-# Other/Transitive Dependencies
-greenlet==3.2.1 # Dependency of SQLAlchemy (async)
-markdown-it-py==3.0.0
-mdurl==0.1.2
-Pygments==2.19.1
-rich==14.0.0 # Used for enhanced CLI output
-tqdm==4.67.1 # Used for progress bars
-typing_extensions==4.13.2 # Often required by type-hinted libraries

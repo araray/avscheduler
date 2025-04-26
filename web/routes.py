@@ -51,26 +51,25 @@ def index():
     Dashboard route. Displays a list of jobs and their latest status.
     """
     jobs_summary = []
-    config = g.get('config', {}) # Get config loaded in app factory
+    # Get config loaded in app factory via Flask's 'g' object
+    # Use .get() with default to avoid errors if config somehow isn't set
+    config = g.get('config', {})
     scheduler = g.get('scheduler') # Get scheduler instance from app context
     session = g.get('db_session')
 
     if session is None:
         flash("Database connection not available.", "error")
-        # Pass the helper function even if DB fails, so base template doesn't break if used there
-        return render_template("index.html", jobs=jobs_summary, get_schedule_display=get_schedule_display)
+        # Pass the helper function and an empty config if DB fails
+        return render_template("index.html", jobs=jobs_summary, config={}, get_schedule_display=get_schedule_display)
     if scheduler is None:
          # Don't flash error here, maybe scheduler isn't running but we can still show logs
          logger.warning("Scheduler instance not available in web context. Next run times will be unavailable.")
 
 
     try:
-        # Get distinct job IDs from logs OR from config (more reliable if job never ran)
-        # Let's use config as the primary source of job IDs
+        # Get job IDs from the config dictionary fetched from 'g'
         job_ids_from_config = list(config.get('jobs', {}).keys())
         logger.debug(f"Found job IDs in config: {job_ids_from_config}")
-
-        # distinct_job_ids = get_distinct_job_ids() # Uses DB session via g
 
         for job_id in job_ids_from_config:
             job_info = config.get('jobs', {}).get(job_id, {})
@@ -102,14 +101,14 @@ def index():
 
             jobs_summary.append({
                 "id": job_id,
+                "name": job_info.get("name"), # Get optional name
                 "last_execution": latest_log.timestamp.strftime('%Y-%m-%d %H:%M:%S') if latest_log else "N/A",
                 "last_exit_code": latest_log.exit_code if latest_log else "N/A",
                 "last_execution_time": f"{latest_log.execution_time:.3f}" if latest_log else "N/A",
                 "next_execution": next_execution,
                 "condition": job_info.get("condition", "N/A"),
                 "type": job_info.get("type", "N/A"),
-                # get_schedule_display is now passed globally to the template context below
-                # "schedule_info": get_schedule_display(job_info),
+                # schedule_info is generated inside the template using the helper and config
             })
 
     except SQLAlchemyError as e:
@@ -127,8 +126,11 @@ def index():
     # Sort jobs by ID for consistent display
     jobs_summary.sort(key=lambda j: j['id'])
 
-    # Pass the helper function to the template context
-    return render_template("index.html", jobs=jobs_summary, get_schedule_display=get_schedule_display)
+    # *** FIX: Pass the 'config' dictionary to the template context ***
+    return render_template("index.html",
+                           jobs=jobs_summary,
+                           config=config, # Pass the config object here
+                           get_schedule_display=get_schedule_display)
 
 
 @bp.route("/job/<job_id>")
@@ -137,7 +139,9 @@ def job_details(job_id):
     Displays the execution log history for a specific job.
     """
     logs = []
-    job_config = g.get('config', {}).get('jobs', {}).get(job_id, {})
+    # Get config from 'g' object
+    config = g.get('config', {})
+    job_config = config.get('jobs', {}).get(job_id, {})
     session = g.get('db_session')
 
     if session is None:

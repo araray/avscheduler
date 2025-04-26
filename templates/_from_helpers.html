@@ -1,0 +1,12 @@
+{# templates/_form_helpers.html #} {% macro render_field(field,
+label_visible=true) -%}
+<div class="mb-3">
+    {% if label_visible %} {{ field.label(class="form-label") }} {% endif %} {{
+    field(**kwargs)|safe }} {# Render the field itself, passing extra kwargs
+    like class #} {% if field.description %}
+    <small class="form-text text-muted">{{ field.description }}</small>
+    {% endif %} {% if field.errors %} {% for error in field.errors %}
+    <div class="invalid-feedback d-block">{{ error }}</div>
+    {# Ensure error messages are displayed #} {% endfor %} {% endif %}
+</div>
+{%- endmacro %}

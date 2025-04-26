@@ -1,0 +1,119 @@
+{% extends "base.html" %}
+{% from "_form_helpers.html" import render_field %} {# Assuming a helper macro file exists or will be created #}
+
+{% block title %}AVScheduler - {{ 'Edit Job' if mode == 'edit' else 'Add New Job' }}{% endblock %}
+
+{% block content %}
+<h1 class="mb-4">{{ 'Edit Job' if mode == 'edit' else 'Add New Job' }} {% if job_id %}<small class="text-muted">({{ job_id }})</small>{% endif %}</h1>
+
+{# Display flashed messages specifically for form errors if needed, though base.html handles general ones #}
+{% with messages = get_flashed_messages(with_categories=true, category_filter=["error", "warning"]) %}
+    {% if messages %}
+        {% for category, message in messages %}
+        <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
+            {{ message }}
+            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+        </div>
+        {% endfor %}
+    {% endif %}
+{% endwith %}
+
+
+<form method="POST" action="{{ request.path }}" novalidate>
+    {{ form.hidden_tag() }} {# Includes CSRF token #}
+
+    <div class="card mb-4">
+        <div class="card-header">Basic Job Information</div>
+        <div class="card-body">
+            {{ render_field(form.job_id, class="form-control", **form.job_id.render_kw) }}
+            {{ render_field(form.name, class="form-control") }}
+            {{ render_field(form.job_type, class="form-select") }} {# Use form-select for <select> #}
+            {{ render_field(form.command, class="form-control") }}
+        </div>
+    </div>
+
+    <div class="card mb-4">
+        <div class="card-header">Scheduling</div>
+        <div class="card-body">
+            {{ render_field(form.schedule_type, class="form-select", id="schedule_type_select") }}
+
+            {# Conditional Fields - Controlled by JavaScript #}
+            <div id="cron_fields" class="mb-3 schedule-fields">
+                {{ render_field(form.schedule, class="form-control", placeholder="e.g., 0 * * * *") }}
+            </div>
+            <div id="interval_fields" class="mb-3 schedule-fields" style="display: none;">
+                 {{ render_field(form.interval_seconds, class="form-control", type="number", min="1") }}
+            </div>
+             <div id="date_fields" class="mb-3 schedule-fields" style="display: none;">
+                 {{ render_field(form.run_date, class="form-control", placeholder="YYYY-MM-DD HH:MM:SS") }}
+            </div>
+        </div>
+    </div>
+
+     <div class="card mb-4">
+        <div class="card-header">Advanced Options</div>
+        <div class="card-body">
+            {{ render_field(form.condition, class="form-control") }}
+            {{ render_field(form.env_file, class="form-control", placeholder="/path/to/your/job.env") }}
+            <div class="row">
+                <div class="col-md-6">
+                     {{ render_field(form.timeout_seconds, class="form-control", type="number", min="1") }}
+                </div>
+                 <div class="col-md-6">
+                     {{ render_field(form.misfire_grace_time, class="form-control", type="number", min="1") }}
+                </div>
+            </div>
+             <div class="row">
+                <div class="col-md-6">
+                     {{ render_field(form.max_instances, class="form-control", type="number", min="1") }}
+                </div>
+                <div class="col-md-6">
+                    {# Render BooleanField as a checkbox #}
+                    <div class="form-check mt-4 pt-2">
+                        {{ form.coalesce(class="form-check-input", id="coalesce_check") }}
+                        <label class="form-check-label" for="coalesce_check">
+                            {{ form.coalesce.label.text }}
+                        </label>
+                        {% if form.coalesce.description %}
+                        <small class="form-text text-muted d-block">{{ form.coalesce.description }}</small>
+                        {% endif %}
+                        {% for error in form.coalesce.errors %}
+                            <div class="invalid-feedback d-block">{{ error }}</div>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="mt-4">
+        {{ form.submit(class="btn btn-primary me-2") }}
+        <a href="{{ url_for('routes.index') }}" class="btn btn-secondary">Cancel</a>
+    </div>
+</form>
+{% endblock %}
+
+{% block scripts %}
+{{ super() }} {# Include scripts from base.html if any #}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const scheduleTypeSelect = document.getElementById('schedule_type_select');
+    const cronFields = document.getElementById('cron_fields');
+    const intervalFields = document.getElementById('interval_fields');
+    const dateFields = document.getElementById('date_fields');
+
+    function toggleScheduleFields() {
+        const selectedType = scheduleTypeSelect.value;
+        cronFields.style.display = (selectedType === 'cron') ? 'block' : 'none';
+        intervalFields.style.display = (selectedType === 'interval') ? 'block' : 'none';
+        dateFields.style.display = (selectedType === 'date') ? 'block' : 'none';
+    }
+
+    // Initial setup on page load
+    toggleScheduleFields();
+
+    // Add event listener
+    scheduleTypeSelect.addEventListener('change', toggleScheduleFields);
+});
+</script>
+{% endblock %}

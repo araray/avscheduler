@@ -57,7 +57,10 @@ def create_app(scheduler_config: Dict[str, Any], scheduler_instance: BackgroundS
             app.config['DB_PATH'] = None # Mark DB as unavailable
 
     # --- Configure Flask App Settings ---
-    app.config['SECRET_KEY'] = os.environ.get('FLASK_SECRET_KEY', 'a_default_secret_key_change_me')
+    # IMPORTANT: Set a strong secret key in production, potentially via environment variable
+    app.config['SECRET_KEY'] = os.environ.get('FLASK_SECRET_KEY', 'dev_secret_key_change_in_prod')
+    # Enable CSRF protection (provided by Flask-WTF)
+    app.config['WTF_CSRF_ENABLED'] = True
     # Add other Flask configurations as needed
 
     # --- Database Session Management (per request) ---
@@ -88,10 +91,15 @@ def create_app(scheduler_config: Dict[str, Any], scheduler_instance: BackgroundS
 
     # --- Register Blueprints ---
     try:
-        from . import routes # Import routes after app is created
+        from . import routes # Main routes (dashboard, logs)
         app.register_blueprint(routes.bp)
         logging.info("Registered 'routes' blueprint.")
-        # Register other blueprints here
+
+        from . import jobs # Job management routes (add, edit, delete) - NEW
+        app.register_blueprint(jobs.bp)
+        logging.info("Registered 'jobs' blueprint.")
+
+        # Register other blueprints here if added later
     except ImportError as e:
          logging.error(f"Failed to import or register blueprints: {e}", exc_info=True)
 
