@@ -13,6 +13,7 @@ from flask import (
     Blueprint, render_template, redirect, url_for, flash, request, current_app, g
 )
 from werkzeug.exceptions import NotFound
+from datetime import datetime # Import datetime for parsing
 
 # Import the form defined for jobs
 from .forms import JobForm
@@ -186,29 +187,45 @@ def edit_job(job_id):
         flash(f"Job ID '{job_id}' not found.", "error")
         raise NotFound() # Return 404
 
-    # Create form instance. For GET, pre-populate using 'obj'.
-    # For POST, WTForms automatically uses submitted data if validation fails.
-    form = JobForm(obj=job_data) # Use obj for pre-population
+    # --- Pre-population Logic ---
+    # Create the form instance first
+    form = JobForm()
 
-    # Handle specific field name differences and types for pre-population if needed
-    # (obj handles basic mapping, but explicit mapping might be needed for complex cases)
-    form.job_type.data = job_data.get('type') # Explicitly map 'type' from config
-    if job_data.get('run_date') and isinstance(job_data.get('run_date'), str):
-         try:
-             from datetime import datetime
-             # Set the data attribute directly for DateTimeField from string
-             form.run_date.data = datetime.strptime(job_data['run_date'], '%Y-%m-%d %H:%M:%S')
-         except ValueError:
-             logger.warning(f"Could not parse run_date '{job_data['run_date']}' for job '{job_id}'.")
-             form.run_date.data = None # Clear if invalid format
-
-    # Populate choices for job_type dynamically
+    # Populate choices for job_type dynamically before setting data
     interpreter_choices = [(key, key) for key in config.get("interpreters", {}).keys()]
     form.job_type.choices = interpreter_choices
-    # Set job_id field as read-only for editing
+
+    # On GET request, pre-populate form fields from job_data
+    if request.method == 'GET':
+        form.job_id.data = job_id # Set the ID from the URL
+        form.name.data = job_data.get('name')
+        form.job_type.data = job_data.get('type') # Map 'type' from config
+        form.command.data = job_data.get('command')
+        form.schedule_type.data = job_data.get('schedule_type')
+        form.schedule.data = job_data.get('schedule')
+        form.interval_seconds.data = job_data.get('interval_seconds')
+        # Parse run_date string into datetime object for the form field
+        run_date_str = job_data.get('run_date')
+        if run_date_str and isinstance(run_date_str, str):
+            try:
+                form.run_date.data = datetime.strptime(run_date_str, '%Y-%m-%d %H:%M:%S')
+            except ValueError:
+                logger.warning(f"Could not parse run_date '{run_date_str}' for job '{job_id}'.")
+                form.run_date.data = None # Clear if invalid format
+        else:
+             form.run_date.data = None # Set to None if not present or not string
+
+        form.condition.data = job_data.get('condition')
+        form.env_file.data = job_data.get('env_file')
+        form.timeout_seconds.data = job_data.get('timeout_seconds')
+        form.misfire_grace_time.data = job_data.get('misfire_grace_time')
+        # WTForms handles boolean default correctly, but explicit set is safer
+        form.coalesce.data = job_data.get('coalesce', True)
+        form.max_instances.data = job_data.get('max_instances', 1)
+
+    # Set job_id field as read-only for editing (applies to both GET and POST rendering)
     form.job_id.render_kw = {'readonly': True}
-    # Manually set job_id data for the form instance as it's readonly
-    form.job_id.data = job_id
+    # --- End Pre-population Logic ---
 
 
     if form.validate_on_submit():
@@ -249,11 +266,11 @@ def edit_job(job_id):
             return redirect(url_for('routes.job_details', job_id=job_id))
         else:
              # Saving failed, stay on page, error flashed by helper
-             # Re-populate form with submitted (but unsaved) data
-             form = JobForm() # Recreate form to populate from request.form
-             form.job_type.choices = interpreter_choices # Repopulate choices
-             form.job_id.render_kw = {'readonly': True} # Keep ID readonly
-             form.job_id.data = job_id # Re-set the job_id data
+             # Form already contains submitted data due to validate_on_submit
+             # Need to ensure choices are still populated and ID is readonly
+             form.job_type.choices = interpreter_choices
+             form.job_id.render_kw = {'readonly': True}
+             form.job_id.data = job_id # Ensure job_id data is set
              return render_template("add_edit_job.html", form=form, mode='edit', job_id=job_id)
 
     elif request.method == "POST":
