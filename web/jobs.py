@@ -159,6 +159,9 @@ def add_job():
     interpreter_choices = [(key, key) for key in config.get("interpreters", {}).keys()]
     form.job_type.choices = interpreter_choices
 
+    # *** FIX: Initialize render_kw for job_id in add mode ***
+    form.job_id.render_kw = {} # Ensure it's a dict, even if empty
+
     if form.validate_on_submit():
         # Operate on a copy of the config from 'g' or load fresh?
         # Let's modify the 'config' object directly (which is g.config)
@@ -205,10 +208,6 @@ def add_job():
         # Save the modified 'config' object back to file and trigger reload
         if _save_config_or_flash(config_path, config):
             # Flash message handled by _save_config_or_flash
-            # if generated_id:
-            #     flash(f"Job added successfully with generated ID '{job_id}'!", "success")
-            # else:
-            #     flash(f"Job '{job_id}' added successfully!", "success")
             return redirect(url_for('routes.index'))
         else:
             # Saving failed, remove the added job from the in-memory config
@@ -218,6 +217,8 @@ def add_job():
 
     elif request.method == "POST":
          flash("Please correct the errors below.", "warning")
+         # Ensure render_kw is still set even on failed POST for re-render
+         form.job_id.render_kw = {}
 
     # GET request or validation failed on POST
     return render_template("add_edit_job.html", form=form, mode='add', job_id=None)
@@ -275,6 +276,7 @@ def edit_job(job_id):
         form.coalesce.data = job_data.get('coalesce', True)
         form.max_instances.data = job_data.get('max_instances', 1)
 
+    # Set job_id field as read-only for editing (applies to both GET and POST rendering)
     form.job_id.render_kw = {'readonly': True}
     # --- End Pre-population Logic ---
 
@@ -311,7 +313,6 @@ def edit_job(job_id):
         # Save the modified config_to_edit back to file and trigger reload
         if _save_config_or_flash(config_path, config_to_edit):
              # Flash message handled by _save_config_or_flash
-            # flash(f"Job '{job_id}' updated successfully!", "success")
             return redirect(url_for('routes.job_details', job_id=job_id))
         else:
              # Saving failed, stay on page
@@ -323,9 +324,11 @@ def edit_job(job_id):
     elif request.method == "POST":
         flash("Please correct the errors below.", "warning")
         form.job_type.choices = interpreter_choices
+        # Ensure render_kw is set correctly even on failed POST for re-render
         form.job_id.render_kw = {'readonly': True}
         form.job_id.data = job_id
 
+    # GET request or validation failed on POST
     return render_template("add_edit_job.html", form=form, mode='edit', job_id=job_id)
 
 
@@ -357,7 +360,6 @@ def delete_job(job_id):
     # Save updated config back to file
     if _save_config_or_flash(config_path, config_to_edit):
         # Flash message handled by _save_config_or_flash
-        # flash(f"Job '{job_id}' deleted successfully!", "success")
         pass # Success message handled by _save_config_or_flash
     else:
         # Saving failed, error flashed by helper
