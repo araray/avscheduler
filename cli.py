@@ -12,6 +12,7 @@ import toml
 import click
 import logging
 from datetime import datetime
+from subprocess import Popen # Import Popen (though its direct usage here will be removed)
 from tabulate import tabulate
 
 # Adjust path to import from core and utils if necessary
@@ -30,7 +31,8 @@ try:
     from core.database import (
         init_db as core_init_db,
         get_latest_job_log, get_job_logs, delete_job_logs,
-        JobExecutionLog # Import model for type hinting if needed
+        JobExecutionLog, # Import model for type hinting if needed
+        get_session as core_get_session # Import for direct session use if needed
     )
     # Utils
     from utils import get_valid_directory
@@ -42,11 +44,6 @@ except ImportError as e:
 # Configure basic logging for CLI operations
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] [CLI] %(message)s')
 logger = logging.getLogger(__name__)
-
-# --- Global Config Variable (Loaded per command) ---
-# This approach reloads config for each command, ensuring freshness but potentially less efficient.
-# Alternatively, load once in the group context if commands don't modify it frequently.
-# CONFIG = {} # Removed global CONFIG, load per command
 
 # --- Helper to get config path ---
 def resolve_config_path(ctx, param, value):
@@ -72,7 +69,7 @@ def resolve_config_path(ctx, param, value):
 @click.group()
 @click.option(
     "--config", "-c",
-    type=click.Path(dir_okay=False),
+    type=click.Path(dir_okay=False, exists=True), # Ensure config file exists here
     callback=resolve_config_path, # Use callback to resolve default path
     help="Path to the configuration file."
 )
@@ -85,18 +82,19 @@ def cli(ctx, config):
     ctx.ensure_object(dict)
     ctx.obj['CONFIG_PATH'] = config
     logger.debug(f"CLI using configuration file: {config}")
+    # Load config once here for efficiency? Or per command for freshness?
+    # Let's load per command for now to ensure it always reads the latest file.
 
 
 # --- Daemon Commands ---
 
 @cli.command()
-@click.option("--foreground", is_flag=True, help="Run the scheduler in the foreground (debugging).")
+@click.option("--foreground", is_flag=True, help="Explicitly run the scheduler in the foreground.")
 @click.pass_context
 def start(ctx, foreground):
     """
-    Start the scheduler daemon process.
-    Note: Daemonization should ideally be handled by a process manager (systemd, supervisor).
-          This command starts the scheduler logic directly.
+    Starts the scheduler process in the foreground.
+    For background execution, use a process manager like systemd or supervisor.
     """
     config_path = ctx.obj['CONFIG_PATH']
     try:
@@ -123,37 +121,25 @@ def start(ctx, foreground):
         remove_pid(pid_file) # Remove stale PID file
 
     click.echo("Starting the scheduler...")
+    click.echo("Running in foreground. Press Ctrl+C to stop.")
+    if not foreground:
+         click.echo("Note: For background execution, please use a process manager (systemd, supervisor, etc.).")
 
-    if foreground:
-        click.echo("Running in foreground. Press Ctrl+C to stop.")
-        # Directly call the core start function (which blocks)
-        try:
-             # Import here to avoid loading scheduler logic unless starting
-             from core.scheduler_logic import start_scheduler_process
-             start_scheduler_process(config)
-        except Exception as e:
-             click.echo(f"Scheduler failed to start or exited unexpectedly: {e}", err=True)
-             # Ensure PID is cleaned up if start_scheduler_process failed early
-             if read_pid(pid_file) == os.getpid():
-                 remove_pid(pid_file)
-             sys.exit(1)
-    else:
-        click.echo("Starting in background (simulated - use systemd or similar for true daemonization).")
-        # In a real scenario, you'd use python-daemon or fork here.
-        # For simplicity, we'll just launch scheduler.py as a detached process.
-        # This is NOT robust daemonization.
-        try:
-            # Use sys.executable to ensure the same Python interpreter is used
-            cmd = [sys.executable, os.path.join(project_root, 'scheduler.py'), '--config', config_path]
-            # Use Popen to detach
-            p = Popen(cmd, stdout=open(os.devnull, 'w'), stderr=open(os.devnull, 'w'), start_new_session=True)
-            click.echo(f"Scheduler process launched in background (PID: {p.pid}). Monitor logs for status.")
-            # We don't have the actual daemon PID here easily without more complex IPC.
-            # The PID file will be written by the scheduler.py process itself.
-            click.echo("Check PID file and logs for confirmation.")
-        except Exception as e:
-            click.echo(f"Failed to launch background process: {e}", err=True)
-            sys.exit(1)
+    # Directly call the core start function (which blocks)
+    try:
+         # Import here to avoid loading scheduler logic unless starting
+         from core.scheduler_logic import start_scheduler_process
+         start_scheduler_process(config)
+    except KeyboardInterrupt:
+         click.echo("\nScheduler stopped by user (Ctrl+C).")
+         # PID removal should be handled by the signal handler in start_scheduler_process
+         sys.exit(0)
+    except Exception as e:
+         click.echo(f"Scheduler failed to start or exited unexpectedly: {e}", err=True)
+         # Ensure PID is cleaned up if start_scheduler_process failed early
+         if read_pid(pid_file) == os.getpid():
+             remove_pid(pid_file)
+         sys.exit(1)
 
 
 @cli.command()
@@ -204,7 +190,8 @@ def stop(ctx):
         for _ in range(5): # Wait up to 5 seconds
              if not is_process_running(pid):
                  click.echo(f"Scheduler process {pid} stopped gracefully.")
-                 remove_pid(pid_file) # Clean up PID file
+                 # PID file should be removed by the daemon's shutdown handler
+                 # remove_pid(pid_file) # Avoid race condition, let daemon handle it
                  return
              time.sleep(1)
 
@@ -270,9 +257,10 @@ def restart(ctx):
     # Add a small delay before starting again
     import time
     time.sleep(2)
-    # Call start command logic
-    ctx.invoke(start)
-    click.echo("Restart sequence initiated. Check status and logs.")
+    # Call start command logic (will run foreground by default now)
+    click.echo("Starting scheduler again (in foreground)...")
+    ctx.invoke(start, foreground=True) # Explicitly start in foreground after restart
+    # click.echo("Restart sequence initiated. Check status and logs.")
 
 
 # --- Job Management Commands ---
@@ -325,7 +313,7 @@ def list_jobs(ctx):
         pass # Cannot get live state easily
 
     click.echo("Fetching job status from configuration and logs...")
-    click.echo("(*) Next Run Time requires the scheduler daemon to be running and accessible (currently not implemented in CLI).")
+    click.echo("(*) Next Run Time requires the scheduler daemon to be running and accessible via IPC (currently not implemented in CLI).")
 
 
     for job_id, job_config in jobs.items():
@@ -455,6 +443,7 @@ def add_job(ctx, job_id, type, schedule_type, schedule, interval_seconds, run_da
     """
     config_path = ctx.obj['CONFIG_PATH']
     try:
+        # Use Path(exists=False) to allow creating if not found
         config = load_config(config_path)
     except FileNotFoundError:
         # If config doesn't exist, start with an empty structure
@@ -709,6 +698,9 @@ def view_logs(ctx, job_id, limit):
             # Let's add a get_all_logs function to core.database
             # For now, simulate by querying directly (less ideal)
             session = core_get_session()
+            if not session: # Handle case where DB init failed earlier
+                 click.echo("Error: Database session not available.", err=True)
+                 return
             logs = session.query(JobExecutionLog)\
                           .order_by(JobExecutionLog.timestamp.desc())\
                           .limit(limit)\
@@ -806,8 +798,7 @@ def cleanup_logs(ctx, job_id, before, all):
 @click.pass_context
 def reload_config(ctx):
     """
-    Signal the running daemon to reload the configuration file.
-    (Requires IPC mechanism - currently not implemented).
+    Signal the running daemon to reload the configuration file (requires SIGHUP).
     """
     # This command cannot directly modify the running daemon's state easily.
     # Options:
@@ -848,4 +839,6 @@ def reload_config(ctx):
 
 # --- Main Execution ---
 if __name__ == "__main__":
-    cli(obj={}) # Pass initial context object
+    # Ensure object exists in context for commands that might be called directly
+    # (though typically run via the group)
+    cli(obj={})
